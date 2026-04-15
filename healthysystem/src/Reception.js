@@ -1,68 +1,94 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState } from 'react';
 import axios from 'axios';
 
 const Reception = () => {
-    const [appointments, setAppointments] = useState([]);
+    const [formData, setFormData] = useState({
+        patientName: '', dob: '', phone: '', healthInsuranceID: '', department: 'Khoa Cơ xương khớp', reason: '', isTransfer: false
+    });
+    const [ticket, setTicket] = useState(null);
 
-    const fetchAppointments = useCallback(async () => {
+    const departments = [
+        "Khoa Cơ xương khớp", "Khoa Thần kinh", "Khoa Phục hồi chức năng", "Khoa Nội YHCT"
+    ];
+
+    const handleSubmit = async (e) => {
+        e.preventDefault();
+        const token = localStorage.getItem('token');
         try {
-            const token = localStorage.getItem('token');
-            const res = await axios.get('http://localhost:3001/api/records', { headers: { Authorization: `Bearer ${token}` } });
-            // Lọc ra những lịch hẹn đang chờ tiếp nhận
-            setAppointments(res.data.filter(a => a.Status === 'Pending'));
-        } catch (err) { console.error(err); }
-    }, []);
-
-    useEffect(() => { fetchAppointments(); }, [fetchAppointments]);
-
-    const handleConfirm = async (id, name) => {
-        const room = Math.floor(Math.random() * 5) + 1; // Random phòng từ 1-5
-        const stt = Math.floor(Math.random() * 100) + 1; // Random Số thứ tự
-        if (window.confirm(`Xác nhận tiếp nhận bệnh nhân ${name}?\n- Cấp Số thứ tự: ${stt}\n- Phân vào Phòng khám: 0${room}`)) {
-            try {
-                const token = localStorage.getItem('token');
-                // Gọi API chuyển trạng thái sang Confirmed
-                await axios.put(`http://localhost:3001/api/appointments/${id}/status`, { status: 'Confirmed' }, { headers: { Authorization: `Bearer ${token}` } });
-                alert(`Đã cấp số ${stt} thành công. Vui lòng hướng dẫn bệnh nhân đến Phòng 0${room}.`);
-                fetchAppointments();
-            } catch (err) { alert("Lỗi tiếp nhận!"); }
+            const res = await axios.post('http://localhost:3001/api/reception/walk-in', formData, {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            setTicket(res.data.ticket);
+            setFormData({ patientName: '', dob: '', phone: '', healthInsuranceID: '', department: 'Khoa Cơ xương khớp', reason: '', isTransfer: false });
+        } catch (err) {
+            alert("Lỗi cấp số: " + (err.response?.data?.message || err.message));
         }
     };
 
     return (
-        <div style={{ padding: '20px', background: '#f8fafc', minHeight: '80vh' }}>
-            <h2 style={{ color: '#7e22ce', borderBottom: '3px solid #7e22ce', paddingBottom: '10px' }}>📋 QUẦY LỄ TÂN - TIẾP NHẬN & CẤP SỐ</h2>
-            <div style={{ background: '#fff', padding: '20px', borderRadius: '10px', boxShadow: '0 4px 6px rgba(0,0,0,0.05)' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                    <thead>
-                        <tr style={{ background: '#f3e8ff', color: '#6b21a8', textAlign: 'left' }}>
-                            <th style={{ padding: '12px' }}>Mã LH</th>
-                            <th style={{ padding: '12px' }}>Tên Bệnh Nhân</th>
-                            <th style={{ padding: '12px' }}>SĐT</th>
-                            <th style={{ padding: '12px' }}>Ngày hẹn</th>
-                            <th style={{ padding: '12px' }}>BHYT</th>
-                            <th style={{ padding: '12px' }}>Thao tác</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {appointments.length > 0 ? appointments.map(app => (
-                            <tr key={app.AppointmentID} style={{ borderBottom: '1px solid #e2e8f0' }}>
-                                <td style={{ padding: '12px', fontWeight: 'bold' }}>#{app.AppointmentID}</td>
-                                <td style={{ padding: '12px' }}>{app.PatientFullName}</td>
-                                <td style={{ padding: '12px' }}>{app.ContactPhone}</td>
-                                <td style={{ padding: '12px' }}>{new Date(app.AppointmentDate).toLocaleDateString('vi-VN')}</td>
-                                <td style={{ padding: '12px' }}>{app.InsuranceType === 'BHYT' ? '✅ Có' : '❌ Không'}</td>
-                                <td style={{ padding: '12px' }}>
-                                    <button onClick={() => handleConfirm(app.AppointmentID, app.PatientFullName)} style={{ background: '#9333ea', color: '#fff', border: 'none', padding: '8px 15px', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}>
-                                        Cấp Số Khám
-                                    </button>
-                                </td>
-                            </tr>
-                        )) : <tr><td colSpan="6" style={{ textAlign: 'center', padding: '20px' }}>Không có bệnh nhân chờ.</td></tr>}
-                    </tbody>
-                </table>
+        <div style={{ padding: '20px', maxWidth: '1000px', margin: '0 auto', display: 'flex', gap: '30px' }}>
+            <div style={{ flex: 1, backgroundColor: 'white', padding: '20px', borderRadius: '8px', boxShadow: '0 2px 10px rgba(0,0,0,0.1)' }}>
+                <h2 style={{ borderBottom: '2px solid #2980b9', paddingBottom: '10px', color: '#2c3e50' }}>ĐĂNG KÝ KHÁCH VÃNG LAI</h2>
+                <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '15px', marginTop: '20px' }}>
+                    <div>
+                        <label>Họ và tên Bệnh nhân:</label>
+                        <input type="text" value={formData.patientName} onChange={e => setFormData({...formData, patientName: e.target.value})} required style={{ width: '100%', padding: '8px', marginTop: '5px' }}/>
+                    </div>
+                    <div style={{ display: 'flex', gap: '15px' }}>
+                        <div style={{ flex: 1 }}>
+                            <label>Ngày sinh:</label>
+                            <input type="date" value={formData.dob} onChange={e => setFormData({...formData, dob: e.target.value})} required style={{ width: '100%', padding: '8px', marginTop: '5px' }}/>
+                        </div>
+                        <div style={{ flex: 1 }}>
+                            <label>Số điện thoại:</label>
+                            <input type="text" value={formData.phone} onChange={e => setFormData({...formData, phone: e.target.value})} required style={{ width: '100%', padding: '8px', marginTop: '5px' }}/>
+                        </div>
+                    </div>
+                    <div>
+                        <label>Mã BHYT (Nếu có):</label>
+                        <input type="text" value={formData.healthInsuranceID} onChange={e => setFormData({...formData, healthInsuranceID: e.target.value})} placeholder="Nhập mã thẻ BHYT..." style={{ width: '100%', padding: '8px', marginTop: '5px' }}/>
+                    </div>
+                    {formData.healthInsuranceID && (
+                        <div>
+                            <label style={{ display: 'flex', alignItems: 'center', gap: '10px', fontWeight: 'bold', color: '#c0392b' }}>
+                                <input type="checkbox" checked={formData.isTransfer} onChange={e => setFormData({...formData, isTransfer: e.target.checked})} />
+                                Bệnh nhân có Giấy chuyển tuyến
+                            </label>
+                        </div>
+                    )}
+                    <div>
+                        <label>Khoa khám:</label>
+                        <select value={formData.department} onChange={e => setFormData({...formData, department: e.target.value})} style={{ width: '100%', padding: '8px', marginTop: '5px' }}>
+                            {departments.map(d => <option key={d} value={d}>{d}</option>)}
+                        </select>
+                    </div>
+                    <div>
+                        <label>Lý do khám:</label>
+                        <textarea value={formData.reason} onChange={e => setFormData({...formData, reason: e.target.value})} required style={{ width: '100%', padding: '8px', marginTop: '5px', height: '60px' }}></textarea>
+                    </div>
+                    <button type="submit" style={{ backgroundColor: '#27ae60', color: 'white', padding: '12px', border: 'none', borderRadius: '4px', fontWeight: 'bold', cursor: 'pointer', fontSize: '15px' }}>LƯU & CẤP SỐ KHÁM</button>
+                </form>
             </div>
+
+            {/* PHIẾU IN CẤP SỐ */}
+            {ticket && (
+                <div style={{ flex: '0 0 350px' }}>
+                    <div style={{ border: '2px dashed #34495e', padding: '20px', backgroundColor: '#fdfbfb', textAlign: 'center' }}>
+                        <h3 style={{ margin: 0, color: '#2c3e50' }}>BV YDCT KIÊN GIANG</h3>
+                        <p style={{ margin: '5px 0', fontSize: '14px', color: '#7f8c8d' }}>Phiếu Cấp Số Thứ Tự</p>
+                        <hr style={{ borderTop: '1px solid #ccc' }} />
+                        <div style={{ fontSize: '50px', fontWeight: 'bold', color: '#e74c3c', margin: '15px 0' }}>
+                            {ticket.QueueNumber < 10 ? `0${ticket.QueueNumber}` : ticket.QueueNumber}
+                        </div>
+                        <div style={{ fontSize: '18px', fontWeight: 'bold' }}>{ticket.PatientName}</div>
+                        <div style={{ fontSize: '16px', margin: '10px 0', color: '#2980b9' }}>Phòng: {ticket.Department}</div>
+                        <p style={{ fontSize: '12px', color: '#95a5a6' }}>Giờ in: {ticket.Time}</p>
+                        <button style={{ marginTop: '15px', padding: '8px 20px', border: '1px solid #34495e', cursor: 'pointer', backgroundColor: 'white' }} onClick={() => window.print()}>In phiếu này</button>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };
+
 export default Reception;

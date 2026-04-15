@@ -1,150 +1,162 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 
 const Treatment = () => {
-    const [records, setRecords] = useState([]);
-    const [showModal, setShowModal] = useState(false);
-    const [showHistoryModal, setShowHistoryModal] = useState(false);
+    const [pendingTreatments, setPendingTreatments] = useState([]);
     const [selectedRecord, setSelectedRecord] = useState(null);
-    const [formData, setFormData] = useState({ TechniqueType: 'Châm cứu', Result: '', Notes: '' });
-    const [sessionHistory, setSessionHistory] = useState([]);
+    const [treatmentData, setTreatmentData] = useState({
+        TechniqueType: 'Châm cứu',
+        Result: 'Tốt',
+        Notes: ''
+    });
 
-    // Lấy quyền hiện tại để khóa chức năng đối với Admin
-    const role = localStorage.getItem('role');
+    const getAuthHeader = () => ({
+        headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
+    });
 
-    const fetchRecords = useCallback(async () => {
-        try {
-            const token = localStorage.getItem('token');
-            const res = await axios.get('http://localhost:3001/api/medical-records', { headers: { Authorization: `Bearer ${token}` } });
-            setRecords(res.data);
-        } catch (error) { alert("Lỗi tải dữ liệu bệnh án"); }
+    useEffect(() => {
+        fetchPendingTreatments();
     }, []);
 
-    useEffect(() => { fetchRecords(); }, [fetchRecords]);
-
-    const handleSaveSession = async (e) => {
-        e.preventDefault();
+    // Fetch bệnh án từ Bác sĩ chuyển sang
+    const fetchPendingTreatments = async () => {
         try {
-            const token = localStorage.getItem('token');
-            await axios.post('http://localhost:3001/api/treatments', { recordId: selectedRecord.RecordID, ...formData }, { headers: { Authorization: `Bearer ${token}` } });
-            alert("Đã ghi nhận buổi trị liệu thành công!");
-            setShowModal(false);
-            setFormData({ TechniqueType: 'Châm cứu', Result: '', Notes: '' });
-        } catch (err) { alert("Lỗi ghi nhận liệu trình."); }
+            const res = await axios.get('http://localhost:3001/api/medical-records', getAuthHeader());
+            // Lọc ra các bệnh án có chữ "Chỉ định YHCT" trong kế hoạch điều trị
+            const yhctRecords = res.data.filter(record => record.TreatmentPlan && record.TreatmentPlan.includes('[Chỉ định YHCT:'));
+            setPendingTreatments(yhctRecords);
+        } catch (err) {
+            alert("Lỗi tải danh sách chỉ định YHCT: " + err.message);
+        }
     };
 
-    const handleViewHistory = async (record) => {
+    const handleSelectRecord = (record) => {
         setSelectedRecord(record);
+        
+        // Bóc tách tự động các kỹ thuật bác sĩ đã yêu cầu từ text TreatmentPlan
+        const match = record.TreatmentPlan.match(/\[Chỉ định YHCT: (.*?)\]/);
+        if (match && match[1]) {
+            const requestedServices = match[1].split(', ');
+            if (requestedServices.length > 0) {
+                setTreatmentData({ ...treatmentData, TechniqueType: requestedServices[0] });
+            }
+        }
+    };
+
+    const handleSaveTreatment = async (e) => {
+        e.preventDefault();
+        const confirmSave = window.confirm("XÁC NHẬN KÝ LƯU:\nBạn xác nhận đã thực hiện xong kỹ thuật này cho bệnh nhân?");
+        if (!confirmSave) return;
+
         try {
-            const token = localStorage.getItem('token');
-            const res = await axios.get(`http://localhost:3001/api/treatments/${record.RecordID}`, { headers: { Authorization: `Bearer ${token}` } });
-            setSessionHistory(res.data);
-            setShowHistoryModal(true);
-        } catch (err) { alert("Lỗi tải lịch sử liệu trình."); }
+            await axios.post('http://localhost:3001/api/treatments', {
+                recordId: selectedRecord.RecordID,
+                TechniqueType: treatmentData.TechniqueType,
+                Result: treatmentData.Result,
+                Notes: treatmentData.Notes
+            }, getAuthHeader());
+
+            alert("Ghi nhận thực hiện thủ thuật YHCT thành công!");
+            setSelectedRecord(null);
+            setTreatmentData({ TechniqueType: 'Châm cứu', Result: 'Tốt', Notes: '' });
+            fetchPendingTreatments(); // Refresh list
+        } catch (err) {
+            alert("Lỗi lưu liệu trình: " + (err.response?.data?.message || err.message));
+        }
     };
 
     return (
-        <div style={{ padding: '20px', fontFamily: 'Arial, sans-serif' }}>
-            <h2 style={{ color: '#0984e3', borderBottom: '3px solid #0984e3', paddingBottom: '10px', marginBottom: '20px' }}>QUẢN LÝ LIỆU TRÌNH YHCT</h2>
-            <div style={{ background: '#fff', padding: '20px', borderRadius: '8px', boxShadow: '0 4px 15px rgba(0,0,0,0.05)' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                    <thead style={{ background: '#f1f5f9', textAlign: 'left' }}>
-                        <tr>
-                            <th style={{ padding: '12px' }}>Mã BA</th>
-                            <th>Bệnh nhân</th>
-                            <th>Chẩn đoán (ICD-10)</th>
-                            <th>Liệu trình chỉ định</th>
-                            <th style={{ textAlign: 'center' }}>Thao tác</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {records.map(r => (
-                            <tr key={r.RecordID} style={{ borderBottom: '1px solid #eee' }}>
-                                <td style={{ padding: '12px', fontWeight: 'bold' }}>#{r.RecordID}</td>
-                                <td style={{ fontWeight: 'bold', color: '#0984e3' }}>{r.PatientName}</td>
-                                <td>{r.Diagnosis} {r.ICD10 ? `(${r.ICD10})` : ''}</td>
-                                <td>{r.TreatmentPlan}</td>
-                                <td style={{ textAlign: 'center' }}>
-                                    <button onClick={() => handleViewHistory(r)} style={{ background: '#f39c12', color: '#fff', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', marginRight: '5px' }}>
-                                        Xem lịch sử
-                                    </button>
-                                    
-                                    {/* KHÓA NÚT GHI NHẬN VỚI ADMIN */}
-                                    {role !== 'Admin' ? (
-                                        <button onClick={() => { setSelectedRecord(r); setShowModal(true); }} style={{ background: '#27ae60', color: '#fff', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>
-                                            Ghi nhận
-                                        </button>
-                                    ) : <span style={{ color: '#ccc', fontStyle: 'italic', fontSize: '13px' }}>Chỉ xem</span>}
-                                </td>
-                            </tr>
-                        ))}
-                    </tbody>
-                </table>
+        <div style={{ padding: '20px', display: 'flex', gap: '20px', alignItems: 'flex-start' }}>
+            {/* CỘT 1: DANH SÁCH CHỜ THỰC HIỆN KỸ THUẬT */}
+            <div style={{ width: '380px', backgroundColor: '#fff', border: '1px solid #bdc3c7', padding: '15px' }}>
+                <h3 style={{ marginTop: 0, color: '#2c3e50', borderBottom: '2px solid #27ae60', paddingBottom: '10px' }}>Y LỆNH YHCT CHỜ THỰC HIỆN</h3>
+                {pendingTreatments.length === 0 ? <p style={{ color: '#7f8c8d' }}>Không có y lệnh YHCT nào chờ xử lý.</p> : null}
+                
+                <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
+                    {pendingTreatments.map(record => (
+                        <li key={record.RecordID} 
+                            style={{ 
+                                padding: '12px', borderBottom: '1px solid #ecf0f1', cursor: 'pointer', 
+                                backgroundColor: selectedRecord?.RecordID === record.RecordID ? '#eafaf1' : 'transparent',
+                                borderLeft: selectedRecord?.RecordID === record.RecordID ? '4px solid #27ae60' : '4px solid transparent'
+                            }}
+                            onClick={() => handleSelectRecord(record)}
+                        >
+                            <div style={{ fontWeight: 'bold', fontSize: '15px', color: '#2c3e50' }}>{record.PatientName}</div>
+                            <div style={{ fontSize: '13px', color: '#c0392b', marginTop: '4px', fontWeight: 'bold' }}>ICD-10: {record.ICD10}</div>
+                            <div style={{ fontSize: '13px', color: '#7f8c8d', marginTop: '4px' }}>BS Chỉ định: {record.DoctorName}</div>
+                        </li>
+                    ))}
+                </ul>
             </div>
 
-            {/* MODAL GHI NHẬN BUỔI TẬP */}
-            {showModal && selectedRecord && (
-                <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', backgroundColor: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999 }}>
-                    <div style={{ backgroundColor: '#fff', padding: '30px', borderRadius: '12px', width: '450px' }}>
-                        <h3 style={{ color: '#0984e3', textAlign: 'center', marginTop: 0 }}>GHI NHẬN LIỆU TRÌNH</h3>
-                        <p><strong>Bệnh nhân:</strong> <span style={{ color: '#0984e3' }}>{selectedRecord.PatientName}</span></p>
-                        <form onSubmit={handleSaveSession} style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
-                            <select value={formData.TechniqueType} onChange={e => setFormData({ ...formData, TechniqueType: e.target.value })} style={{ padding: '12px', borderRadius: '6px', border: '1px solid #ccc' }}>
+            {/* CỘT 2: KHU VỰC THỰC HIỆN FLOWSHEET */}
+            <div style={{ flex: 1, backgroundColor: '#fff', border: '1px solid #bdc3c7', padding: '20px' }}>
+                <h3 style={{ marginTop: 0, color: '#2c3e50', borderBottom: '2px solid #27ae60', paddingBottom: '10px' }}>GHI NHẬN THỰC HIỆN THỦ THUẬT (FLOWSHEET)</h3>
+                
+                {!selectedRecord ? (
+                    <div style={{ color: '#7f8c8d', textAlign: 'center', padding: '40px 0' }}>Vui lòng chọn Y lệnh bên trái để ghi nhận kết quả thực hiện.</div>
+                ) : (
+                    <form onSubmit={handleSaveTreatment} style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+                        <div style={{ backgroundColor: '#f9f9f9', padding: '15px', border: '1px dashed #7f8c8d' }}>
+                            <div style={{ marginBottom: '8px' }}><strong>Bệnh nhân:</strong> <span style={{ color: '#c0392b', fontSize: '16px', fontWeight: 'bold', textTransform: 'uppercase' }}>{selectedRecord.PatientName}</span></div>
+                            <div style={{ marginBottom: '8px' }}><strong>Chẩn đoán:</strong> {selectedRecord.Diagnosis}</div>
+                            <div style={{ color: '#2980b9', fontWeight: 'bold' }}>Y LỆNH BÁC SĨ:</div>
+                            <div style={{ whiteSpace: 'pre-wrap', fontSize: '14px', marginTop: '5px', backgroundColor: '#e8f4f8', padding: '10px', borderLeft: '3px solid #2980b9' }}>
+                                {selectedRecord.TreatmentPlan}
+                            </div>
+                        </div>
+
+                        <div>
+                            <label style={{ fontWeight: 'bold' }}>Loại kỹ thuật vừa thực hiện:</label>
+                            <select 
+                                value={treatmentData.TechniqueType} 
+                                onChange={e => setTreatmentData({...treatmentData, TechniqueType: e.target.value})}
+                                style={{ width: '100%', padding: '10px', marginTop: '5px', border: '1px solid #bdc3c7' }}
+                            >
                                 <option value="Châm cứu">Châm cứu</option>
                                 <option value="Xoa bóp bấm huyệt">Xoa bóp bấm huyệt</option>
                                 <option value="Kéo giãn cột sống">Kéo giãn cột sống</option>
-                                <option value="Cấy chỉ">Cấy chỉ</option>
+                                <option value="Điện châm">Điện châm</option>
+                                <option value="Cứu ngải">Cứu ngải</option>
+                                <option value="Chiếu đèn hồng ngoại">Chiếu đèn hồng ngoại</option>
                             </select>
-                            <input placeholder="Đánh giá kết quả sau buổi tập..." value={formData.Result} onChange={e => setFormData({ ...formData, Result: e.target.value })} required style={{ padding: '12px', borderRadius: '6px', border: '1px solid #ccc' }} />
-                            <textarea placeholder="Ghi chú điều dưỡng..." value={formData.Notes} onChange={e => setFormData({ ...formData, Notes: e.target.value })} rows="3" style={{ padding: '12px', borderRadius: '6px', border: '1px solid #ccc' }}></textarea>
-                            <div style={{ display: 'flex', gap: '10px' }}>
-                                <button type="button" onClick={() => setShowModal(false)} style={{ flex: 1, padding: '12px', borderRadius: '6px', border: 'none', background: '#e2e8f0', cursor: 'pointer', fontWeight: 'bold' }}>Hủy</button>
-                                <button type="submit" style={{ flex: 1, padding: '12px', background: '#0984e3', color: 'white', border: 'none', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer' }}>Lưu Buổi Tập</button>
-                            </div>
-                        </form>
-                    </div>
-                </div>
-            )}
-
-            {/* MODAL XEM LỊCH SỬ CÁC BUỔI TẬP */}
-            {showHistoryModal && selectedRecord && (
-                <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', backgroundColor: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999 }}>
-                    <div style={{ backgroundColor: '#fff', padding: '30px', borderRadius: '12px', width: '600px', maxHeight: '80vh', overflowY: 'auto' }}>
-                        <h3 style={{ color: '#0984e3', textAlign: 'center', marginTop: 0, borderBottom: '2px solid #e2e8f0', paddingBottom: '10px' }}>LỊCH SỬ ĐIỀU TRỊ YHCT</h3>
-                        <p><strong>Bệnh nhân:</strong> <span style={{ color: '#0984e3' }}>{selectedRecord.PatientName}</span> (Mã BA: #{selectedRecord.RecordID})</p>
-                        
-                        {sessionHistory.length > 0 ? (
-                            <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: '15px' }}>
-                                <thead style={{ background: '#f1f5f9', textAlign: 'left' }}>
-                                    <tr>
-                                        <th style={{ padding: '10px', borderBottom: '1px solid #ddd' }}>Ngày tập</th>
-                                        <th style={{ padding: '10px', borderBottom: '1px solid #ddd' }}>Kỹ thuật</th>
-                                        <th style={{ padding: '10px', borderBottom: '1px solid #ddd' }}>Kết quả</th>
-                                        <th style={{ padding: '10px', borderBottom: '1px solid #ddd' }}>Y/Bác sĩ</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {sessionHistory.map(session => (
-                                        <tr key={session.SessionID} style={{ borderBottom: '1px solid #eee' }}>
-                                            <td style={{ padding: '10px' }}>{new Date(session.SessionDate).toLocaleString('vi-VN')}</td>
-                                            <td style={{ padding: '10px', fontWeight: 'bold', color: '#27ae60' }}>{session.TechniqueType}</td>
-                                            <td style={{ padding: '10px' }}>{session.Result}</td>
-                                            <td style={{ padding: '10px', color: '#475569' }}>{session.NurseName}</td>
-                                        </tr>
-                                    ))}
-                                </tbody>
-                            </table>
-                        ) : (
-                            <p style={{ textAlign: 'center', color: '#94a3b8', fontStyle: 'italic', padding: '20px 0' }}>Bệnh nhân chưa có lịch sử trị liệu nào.</p>
-                        )}
-
-                        <div style={{ display: 'flex', justifyContent: 'center', marginTop: '20px' }}>
-                            <button onClick={() => setShowHistoryModal(false)} style={{ padding: '10px 30px', background: '#e2e8f0', border: 'none', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer' }}>Đóng</button>
                         </div>
-                    </div>
-                </div>
-            )}
+
+                        <div style={{ display: 'flex', gap: '15px' }}>
+                            <div style={{ flex: 1 }}>
+                                <label style={{ fontWeight: 'bold' }}>Tình trạng đáp ứng (Kết quả):</label>
+                                <select 
+                                    value={treatmentData.Result} 
+                                    onChange={e => setTreatmentData({...treatmentData, Result: e.target.value})}
+                                    style={{ width: '100%', padding: '10px', marginTop: '5px', border: '1px solid #bdc3c7' }}
+                                >
+                                    <option value="Tốt">Bệnh nhân đáp ứng Tốt</option>
+                                    <option value="Khá">Bệnh nhân đáp ứng Khá</option>
+                                    <option value="Trung bình">Bệnh nhân đáp ứng Trung bình</option>
+                                    <option value="Có dấu hiệu mệt mỏi/Sốc">Có dấu hiệu mệt mỏi/Vựng châm</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div>
+                            <label style={{ fontWeight: 'bold' }}>Ghi chú điều dưỡng (Chỉ số sinh tồn, phản ứng phụ):</label>
+                            <textarea 
+                                value={treatmentData.Notes} 
+                                onChange={e => setTreatmentData({...treatmentData, Notes: e.target.value})}
+                                placeholder="Nhập ghi chú chi tiết sau khi thực hiện kỹ thuật..."
+                                style={{ width: '100%', height: '80px', padding: '10px', marginTop: '5px', border: '1px solid #bdc3c7' }}
+                            ></textarea>
+                        </div>
+
+                        <button type="submit" style={{ backgroundColor: '#27ae60', color: 'white', padding: '12px', border: 'none', fontWeight: 'bold', cursor: 'pointer', marginTop: '10px' }}>
+                            KÝ NHẬN HOÀN THÀNH KỸ THUẬT
+                        </button>
+                    </form>
+                )}
+            </div>
         </div>
     );
 };
+
 export default Treatment;
