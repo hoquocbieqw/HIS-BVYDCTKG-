@@ -1,0 +1,86 @@
+/* =========================================
+   GIAO DIỆN FORM ĐẶT LỊCH (TRÀN CHIỀU NGANG)
+========================================= */
+
+.appointment-wrapper {
+    width: 100%;
+    padding: 10px 0;
+}
+
+/* Thẻ form: Rộng 100% tràn khung ngang */
+.appointment-card {
+    background: #ffffff;
+    width: 100%; 
+    padding: 40px;
+    border-radius: 12px;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+    box-sizing: border-box; /* Bắt buộc để không bị tràn thanh cuộn */
+}
+
+.form-title {
+    color: #0f172a;
+    margin-top: 0;
+    margin-bottom: 30px;
+    font-size: 26px; /* Chữ to hơn */
+    font-weight: 700;
+    border-bottom: 2px solid #f1f5f9;
+    padding-bottom: 15px;
+}
+
+.form-group {
+    margin-bottom: 30px; /* Tăng khoảng cách giữa các ô dọc */
+}
+
+/* Tiêu đề ô nhập: Ép nằm trên, ô nhập nằm dưới */
+.form-label {
+    display: block; 
+    margin-bottom: 12px;
+    font-weight: 600;
+    color: #334155;
+    font-size: 16px; /* Chữ to rõ */
+}
+
+/* Ô nhập liệu: Trải dài 100% chiều ngang */
+.form-control {
+    width: 100%; 
+    padding: 18px; /* Tăng độ mập của ô */
+    border: 2px solid #cbd5e1;
+    border-radius: 8px;
+    font-size: 16px;
+    color: #1e293b;
+    background-color: #f8fafc;
+    box-sizing: border-box; 
+    font-family: inherit;
+    transition: 0.3s;
+}
+
+.form-control:focus {
+    outline: none;
+    border-color: #0284c7;
+    background-color: #ffffff;
+}
+
+textarea.form-control {
+    min-height: 150px; /* Khung lý do cao hẳn lên */
+    resize: vertical;
+}
+
+/* Nút bấm: Nằm dưới cùng, to và trải dài 100% */
+.btn-submit {
+    width: 100%;
+    background: #0284c7;
+    color: white;
+    padding: 20px; /* Nút rất to */
+    border: none;
+    border-radius: 8px;
+    font-size: 20px; /* Chữ trong nút to rõ */
+    font-weight: bold;
+    cursor: pointer;
+    margin-top: 15px;
+    transition: 0.3s;
+    text-transform: uppercase; /* Chữ in hoa cho nổi bật */
+}
+
+.btn-submit:hover {
+    background: #0369a1;
+}

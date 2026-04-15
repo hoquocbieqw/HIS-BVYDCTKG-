@@ -1,0 +1,40 @@
+<mxfile host="app.diagrams.net">
+  <diagram name="ERD - Lab 4">
+    <mxGraphModel dx="1034" dy="564" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="ent1" value="Users" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="100" y="200" width="120" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="ent2" value="Appointments" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="400" y="200" width="120" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="rel" value="Đặt lịch" style="rhombus;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="1">
+          <mxGeometry x="270" y="205" width="80" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="attr1" value="&lt;u&gt;AppointmentID&lt;/u&gt;" style="ellipse;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="350" y="100" width="100" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="attr2" value="DoctorName" style="ellipse;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="470" y="100" width="100" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="attr3" value="Status" style="ellipse;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="540" y="180" width="100" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="l1" style="endArrow=none;html=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="ent1" target="rel">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="l2" style="endArrow=ERoneToMany;html=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="rel" target="ent2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="la1" style="endArrow=none;html=1;exitX=0.5;exitY=1;entryX=0.25;entryY=0;" edge="1" parent="1" source="attr1" target="ent2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="la2" style="endArrow=none;html=1;exitX=0.5;exitY=1;entryX=0.75;entryY=0;" edge="1" parent="1" source="attr2" target="ent2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
