@@ -17,6 +17,10 @@ import AdvancedReport from './AdvancedReport';
 import UserManagement from './UserManagement';
 import Treatment from './Treatment';
 
+// Import 2 Component mới cho quy trình BPMN Lễ tân và Dược sĩ
+import Reception from './Reception';
+import PharmacyDispense from './PharmacyDispense';
+
 function App() {
     const [user, setUser] = useState(() => JSON.parse(localStorage.getItem('user')));
 
@@ -51,17 +55,36 @@ function App() {
                     <MainLayout user={user} onLogout={handleLogout}>
                         <Routes>
                             <Route path="/dashboard" element={user ? <Dashboard user={user} /> : <Navigate to="/login" />} />
-                            <Route path="/appointment" element={<ProtectedRoute allowedRoles={['Patient', 'Nurse', 'Admin']}><Appointment /></ProtectedRoute>} />
-                            <Route path="/my-appointments" element={<ProtectedRoute allowedRoles={['Patient', 'Admin']}><PatientAppointments /></ProtectedRoute>} />
-                            <Route path="/schedule" element={<ProtectedRoute allowedRoles={['Doctor', 'Nurse', 'Admin']}><Schedule /></ProtectedRoute>} />
-                            <Route path="/patients" element={<ProtectedRoute allowedRoles={['Doctor', 'Nurse', 'Admin']}><PatientList /></ProtectedRoute>} />
+                            
+                            {/* Phân quyền mới: Lễ tân được đăng ký và xem lịch */}
+                            <Route path="/appointment" element={<ProtectedRoute allowedRoles={['Patient', 'Receptionist', 'Admin']}><Appointment /></ProtectedRoute>} />
+                            <Route path="/my-appointments" element={<ProtectedRoute allowedRoles={['Patient', 'Receptionist', 'Admin']}><PatientAppointments /></ProtectedRoute>} />
+                            
+                            {/* Phân quyền mới: Lễ tân xem được lịch làm việc và danh sách bệnh nhân */}
+                            <Route path="/schedule" element={<ProtectedRoute allowedRoles={['Doctor', 'Nurse', 'Receptionist', 'Admin']}><Schedule /></ProtectedRoute>} />
+                            <Route path="/patients" element={<ProtectedRoute allowedRoles={['Doctor', 'Nurse', 'Receptionist', 'Admin']}><PatientList /></ProtectedRoute>} />
+                            
+                            {/* Tuyến Bác sĩ & Điều dưỡng YHCT */}
                             <Route path="/medical" element={<ProtectedRoute allowedRoles={['Doctor', 'Admin']}><MedicalRecords /></ProtectedRoute>} />
                             <Route path="/treatment" element={<ProtectedRoute allowedRoles={['Doctor', 'Nurse', 'Admin']}><Treatment /></ProtectedRoute>} />
-                            <Route path="/medicines" element={<ProtectedRoute allowedRoles={['Doctor', 'Nurse', 'Admin']}><MedicineManagement /></ProtectedRoute>} />
-                            <Route path="/billing" element={<ProtectedRoute allowedRoles={['Nurse', 'Admin']}><Billing /></ProtectedRoute>} />
+                            
+                            {/* Tuyến Dược sĩ: Quản lý kho và Phát thuốc */}
+                            <Route path="/medicines" element={<ProtectedRoute allowedRoles={['Doctor', 'Pharmacist', 'Admin']}><MedicineManagement /></ProtectedRoute>} />
+                            <Route path="/dispense" element={<ProtectedRoute allowedRoles={['Pharmacist', 'Admin']}><PharmacyDispense /></ProtectedRoute>} />
+                            
+                            {/* Tuyến Thu ngân: Viện phí */}
+                            <Route path="/billing" element={<ProtectedRoute allowedRoles={['Cashier', 'Admin']}><Billing /></ProtectedRoute>} />
+                            
+                            {/* Báo cáo: Thu ngân và Dược sĩ cùng xem được */}
+                            <Route path="/admin/reports" element={<ProtectedRoute allowedRoles={['Admin', 'Cashier', 'Pharmacist']}><AdvancedReport /></ProtectedRoute>} />
+                            
+                            {/* Bệnh nhân và Admin */}
                             <Route path="/my-health" element={<ProtectedRoute allowedRoles={['Patient', 'Admin']}><PatientHistory /></ProtectedRoute>} />
-                            <Route path="/admin/reports" element={<ProtectedRoute allowedRoles={['Admin', 'Nurse']}><AdvancedReport /></ProtectedRoute>} />
                             <Route path="/admin/users" element={<ProtectedRoute allowedRoles={['Admin']}><UserManagement /></ProtectedRoute>} />
+                            
+                            {/* Quy trình BPMN: Lễ tân tiếp nhận cấp số */}
+                            <Route path="/reception" element={<ProtectedRoute allowedRoles={['Receptionist', 'Admin']}><Reception /></ProtectedRoute>} />
+                            
                         </Routes>
                     </MainLayout>
                 } />

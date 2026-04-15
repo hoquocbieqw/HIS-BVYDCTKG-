@@ -12,11 +12,21 @@ const Login = ({ onLogin }) => {
         e.preventDefault(); 
         try {
             const res = await axios.post('http://localhost:3001/api/login', { username, password });
+            
+            // Lưu thông tin vào bộ nhớ trình duyệt
             localStorage.setItem('token', res.data.token);
+            localStorage.setItem('role', res.data.user.role);
+            localStorage.setItem('username', res.data.user.username);
+            localStorage.setItem('userId', res.data.user.id);
+            
+            // Báo cho App.js biết để cập nhật trạng thái
             if (onLogin) {
                 onLogin(res.data.user);
             }
+            
+            // Đã bỏ alert thông báo. Chuyển hướng thẳng và mượt mà vào trang quản trị!
             navigate('/dashboard');
+            
         } catch (err) {
             alert('Lỗi đăng nhập: ' + (err.response?.data?.message || 'Tài khoản hoặc mật khẩu không đúng!'));
         }

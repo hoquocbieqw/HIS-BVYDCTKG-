@@ -54,7 +54,7 @@ app.get('/api/doctors', authenticateToken, (req, res) => {
 // ==========================================
 // 2. API LỊCH HẸN & ĐỒNG BỘ BỆNH NHÂN
 // ==========================================
-app.post('/api/appointments', authenticateToken, checkRole(['Patient', 'Nurse', 'Admin']), (req, res) => {
+app.post('/api/appointments', authenticateToken, checkRole(['Patient', 'Receptionist', 'Admin']), (req, res) => {
     const { doctorName, patientName, dob, phone, address, guardian, healthInsuranceID, department, appointmentDate, reason, insuranceType, transferTicket } = req.body;
     const userId = req.user.id;
     
@@ -81,7 +81,7 @@ app.get('/api/my-patients', authenticateToken, checkRole(['Patient', 'Admin']), 
     });
 });
 
-app.get('/api/records', authenticateToken, checkRole(['Doctor', 'Nurse', 'Admin', 'Patient']), (req, res) => {
+app.get('/api/records', authenticateToken, checkRole(['Doctor', 'Nurse', 'Receptionist', 'Admin', 'Patient']), (req, res) => {
     let sql = "SELECT * FROM Appointments ORDER BY AppointmentDate DESC";
     let params = [];
     if (req.user.role === 'Patient') { 
@@ -97,21 +97,21 @@ app.get('/api/records', authenticateToken, checkRole(['Doctor', 'Nurse', 'Admin'
     });
 });
 
-app.put('/api/appointments/:id/status', authenticateToken, checkRole(['Nurse', 'Admin']), (req, res) => {
+app.put('/api/appointments/:id/status', authenticateToken, checkRole(['Receptionist', 'Admin']), (req, res) => {
     db.query("UPDATE Appointments SET Status = ? WHERE AppointmentID = ?", [req.body.status, req.params.id], (err) => {
         if (err) return res.status(500).json({ message: "Lỗi DB: " + err.message });
         return res.json({ message: "Thành công!" });
     });
 });
 
-app.put('/api/appointments/:id/room', authenticateToken, checkRole(['Nurse', 'Admin']), (req, res) => {
+app.put('/api/appointments/:id/room', authenticateToken, checkRole(['Nurse', 'Receptionist', 'Admin']), (req, res) => {
     db.query("UPDATE Appointments SET Room = ? WHERE AppointmentID = ?", [req.body.room, req.params.id], (err) => {
         if (err) return res.status(500).json({ message: "Lỗi DB: " + err.message });
         return res.json({ message: "Thành công!" });
     });
 });
 
-app.delete('/api/appointments/:id', authenticateToken, checkRole(['Nurse', 'Admin']), (req, res) => {
+app.delete('/api/appointments/:id', authenticateToken, checkRole(['Receptionist', 'Admin']), (req, res) => {
     db.query("DELETE FROM Appointments WHERE AppointmentID = ?", [req.params.id], (err) => {
         if (err) return res.status(500).json({ message: "Lỗi DB: " + err.message });
         return res.json({ message: "Đã xóa!" });
@@ -121,7 +121,7 @@ app.delete('/api/appointments/:id', authenticateToken, checkRole(['Nurse', 'Admi
 // ==========================================
 // 3. API QUẢN LÝ BỆNH NHÂN
 // ==========================================
-app.get('/api/patients', authenticateToken, checkRole(['Doctor', 'Nurse', 'Admin']), (req, res) => {
+app.get('/api/patients', authenticateToken, checkRole(['Doctor', 'Nurse', 'Receptionist', 'Admin']), (req, res) => {
     const syncQuery = `INSERT INTO Patients (Name, DOB, Phone, Address, UserID, Guardian) SELECT A.PatientFullName, MAX(A.DOB), MAX(A.ContactPhone), MAX(A.Address), A.PatientID, MAX(A.Guardian) FROM Appointments A WHERE A.PatientFullName IS NOT NULL AND A.PatientFullName != '' AND NOT EXISTS (SELECT 1 FROM Patients P WHERE P.UserID = A.PatientID AND P.Name = A.PatientFullName) GROUP BY A.PatientID, A.PatientFullName`;
     db.query(syncQuery, (syncErr) => {
         const fetchQuery = `SELECT p.*, (SELECT Reason FROM Appointments a WHERE a.PatientFullName = p.Name AND a.PatientID = p.UserID ORDER BY AppointmentDate DESC LIMIT 1) AS Reason, (SELECT Department FROM Appointments a WHERE a.PatientFullName = p.Name AND a.PatientID = p.UserID ORDER BY AppointmentDate DESC LIMIT 1) AS Department, (SELECT DoctorName FROM Appointments a WHERE a.PatientFullName = p.Name AND a.PatientID = p.UserID ORDER BY AppointmentDate DESC LIMIT 1) AS DoctorName, (SELECT AppointmentDate FROM Appointments a WHERE a.PatientFullName = p.Name AND a.PatientID = p.UserID ORDER BY AppointmentDate DESC LIMIT 1) AS AppointmentDate FROM Patients p ORDER BY p.CreatedAt DESC`;
@@ -132,14 +132,14 @@ app.get('/api/patients', authenticateToken, checkRole(['Doctor', 'Nurse', 'Admin
     });
 });
 
-app.post('/api/patients', authenticateToken, checkRole(['Nurse', 'Admin']), (req, res) => {
+app.post('/api/patients', authenticateToken, checkRole(['Receptionist', 'Admin']), (req, res) => {
     db.query("INSERT INTO Patients (Name, DOB, Address, Phone, HealthInsuranceID, Guardian, UserID, CreatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, NOW())", [req.body.Name, req.body.DOB, req.body.Address, req.body.Phone, req.body.HealthInsuranceID, req.body.Guardian, req.user.id], (err, result) => {
         if (err) return res.status(500).json({ message: "Lỗi DB: " + err.message });
         return res.status(201).json({ message: "Thêm thành công", PatientID: result.insertId });
     });
 });
 
-app.put('/api/patients/:id', authenticateToken, checkRole(['Nurse', 'Admin']), (req, res) => {
+app.put('/api/patients/:id', authenticateToken, checkRole(['Receptionist', 'Admin']), (req, res) => {
     db.query("UPDATE Patients SET Name=?, DOB=?, Address=?, Phone=?, HealthInsuranceID=?, Guardian=? WHERE PatientID=?", [req.body.Name, req.body.DOB, req.body.Address, req.body.Phone, req.body.HealthInsuranceID, req.body.Guardian, req.params.id], (err) => {
         if (err) return res.status(500).json({ message: "Lỗi DB: " + err.message });
         return res.json({ message: "Cập nhật thành công" });
@@ -176,7 +176,6 @@ app.get('/api/medical-records', authenticateToken, checkRole(['Doctor', 'Nurse',
     });
 });
 
-// API LƯU BỆNH ÁN - ĐÃ THÊM errInsert.message ĐỂ BẮT LỖI TẬN GỐC
 app.post('/api/medical-records', authenticateToken, checkRole(['Doctor', 'Admin']), (req, res) => {
     const { PatientID, AppointmentID, Diagnosis, TreatmentPlan, Notes, ICD10 } = req.body;
     db.query("SELECT PatientID FROM Appointments WHERE AppointmentID = ?", [AppointmentID], (err, appRes) => {
@@ -239,7 +238,7 @@ app.get('/api/medicines/all', authenticateToken, (req, res) => {
     });
 });
 
-app.post('/api/medicines', authenticateToken, checkRole(['Nurse', 'Admin', 'Doctor']), (req, res) => {
+app.post('/api/medicines', authenticateToken, checkRole(['Pharmacist', 'Admin']), (req, res) => {
     const { MedicineName, Unit, StockQuantity, Price, Description } = req.body;
     db.query("INSERT INTO medicines (MedicineName, Unit, StockQuantity, Price, Description) VALUES (?, ?, ?, ?, ?)", [MedicineName, Unit, StockQuantity, Price, Description], (err) => {
         if (err) return res.status(500).json({ message: "Lỗi DB: " + err.message });
@@ -247,7 +246,7 @@ app.post('/api/medicines', authenticateToken, checkRole(['Nurse', 'Admin', 'Doct
     });
 });
 
-app.put('/api/medicines/:id', authenticateToken, checkRole(['Nurse', 'Admin', 'Doctor']), (req, res) => {
+app.put('/api/medicines/:id', authenticateToken, checkRole(['Pharmacist', 'Admin']), (req, res) => {
     const { MedicineName, Unit, StockQuantity, Price, Description } = req.body;
     db.query("UPDATE medicines SET MedicineName=?, Unit=?, StockQuantity=?, Price=?, Description=? WHERE MedicineID=?", [MedicineName, Unit, StockQuantity, Price, Description, req.params.id], (err) => {
         if (err) return res.status(500).json({ message: "Lỗi DB: " + err.message });
@@ -255,7 +254,7 @@ app.put('/api/medicines/:id', authenticateToken, checkRole(['Nurse', 'Admin', 'D
     });
 });
 
-app.delete('/api/medicines/:id', authenticateToken, checkRole(['Nurse', 'Admin']), (req, res) => {
+app.delete('/api/medicines/:id', authenticateToken, checkRole(['Pharmacist', 'Admin']), (req, res) => {
     db.query("DELETE FROM medicines WHERE MedicineID = ?", [req.params.id], (err) => {
         if (err) return res.status(500).json({ message: "Lỗi DB: " + err.message });
         return res.json({ message: "Xóa thuốc thành công" });
@@ -285,7 +284,7 @@ app.post('/api/prescriptions', authenticateToken, checkRole(['Doctor', 'Admin'])
     }
 });
 
-app.get('/api/prescriptions/history', authenticateToken, checkRole(['Doctor', 'Nurse', 'Admin']), (req, res) => {
+app.get('/api/prescriptions/history', authenticateToken, checkRole(['Doctor', 'Pharmacist', 'Admin']), (req, res) => {
     db.query(`SELECT DISTINCT mr.RecordID, mr.Diagnosis, a.PatientFullName AS PatientName, a.AppointmentDate FROM MedicalRecords mr JOIN Appointments a ON mr.AppointmentID = a.AppointmentID JOIN prescription_details pd ON mr.RecordID = pd.RecordID ORDER BY a.AppointmentDate DESC`, (err, results) => {
         if (err) return res.status(500).json({ message: "Lỗi DB: " + err.message });
         return res.json(results);
@@ -302,14 +301,14 @@ app.get('/api/prescriptions/details/:recordId', authenticateToken, (req, res) =>
 // ==========================================
 // 6. API VIỆN PHÍ & THANH TOÁN
 // ==========================================
-app.get('/api/billing/pending', authenticateToken, checkRole(['Nurse', 'Admin']), (req, res) => {
+app.get('/api/billing/pending', authenticateToken, checkRole(['Cashier', 'Admin']), (req, res) => {
     db.query(`SELECT mr.RecordID, p.Name AS PatientName, mr.Diagnosis, mr.CreatedAt FROM medicalrecords mr JOIN patients p ON mr.PatientID = p.PatientID LEFT JOIN invoices i ON mr.RecordID = i.RecordID WHERE i.InvoiceID IS NULL OR i.PaymentStatus = 'Unpaid' ORDER BY mr.CreatedAt DESC`, (err, results) => {
         if (err) return res.status(500).json({ message: "Lỗi DB: " + err.message });
         return res.json(results);
     });
 });
 
-app.get('/api/billing/preview/:recordId', authenticateToken, checkRole(['Nurse', 'Admin']), (req, res) => {
+app.get('/api/billing/preview/:recordId', authenticateToken, checkRole(['Cashier', 'Admin']), (req, res) => {
     const { recordId } = req.params;
     const sqlCalculate = `SELECT m.MedicineName, pd.Quantity, m.Price, (pd.Quantity * m.Price) AS SubTotal, a.InsuranceType, a.TransferTicket 
                           FROM prescription_details pd JOIN medicines m ON pd.MedicineID = m.MedicineID 
@@ -335,7 +334,7 @@ app.get('/api/billing/preview/:recordId', authenticateToken, checkRole(['Nurse',
     });
 });
 
-app.post('/api/invoices', authenticateToken, checkRole(['Nurse', 'Admin']), (req, res) => {
+app.post('/api/invoices', authenticateToken, checkRole(['Cashier', 'Admin']), (req, res) => {
     const { recordId, examFee, medicineTotal, totalAmount, paymentMethod, details } = req.body;
     
     db.query("SELECT InvoiceID FROM invoices WHERE RecordID = ? AND PaymentStatus = 'Paid'", [recordId], (checkErr, checkRes) => {
@@ -359,14 +358,14 @@ app.post('/api/invoices', authenticateToken, checkRole(['Nurse', 'Admin']), (req
     });
 });
 
-app.get('/api/invoices/paid', authenticateToken, checkRole(['Nurse', 'Admin']), (req, res) => {
+app.get('/api/invoices/paid', authenticateToken, checkRole(['Cashier', 'Admin']), (req, res) => {
     db.query(`SELECT i.*, p.Name AS PatientName FROM invoices i JOIN medicalrecords mr ON i.RecordID = mr.RecordID JOIN patients p ON mr.PatientID = p.PatientID WHERE i.PaymentStatus = 'Paid' ORDER BY i.CreatedAt DESC`, (err, results) => {
         if (err) return res.status(500).json({ message: "Lỗi DB: " + err.message });
         return res.json(results);
     });
 });
 
-app.post('/api/invoices/cancel/:id', authenticateToken, checkRole(['Nurse', 'Admin']), (req, res) => {
+app.post('/api/invoices/cancel/:id', authenticateToken, checkRole(['Cashier', 'Admin']), (req, res) => {
     const { cancelReason } = req.body;
     db.query("SELECT RecordID FROM invoices WHERE InvoiceID = ?", [req.params.id], (err, invRes) => {
         if (err || invRes.length === 0) return res.status(500).json({ message: "Lỗi tìm hóa đơn: " + (err ? err.message : '') });
@@ -478,7 +477,7 @@ app.delete('/api/patient/appointments/:id', authenticateToken, checkRole(['Patie
 // ==========================================
 // 8. API DASHBOARD BIỂU ĐỒ (ADVANCED REPORT)
 // ==========================================
-app.get('/api/reports/chart-revenue', authenticateToken, checkRole(['Admin', 'Nurse']), (req, res) => {
+app.get('/api/reports/chart-revenue', authenticateToken, checkRole(['Admin', 'Cashier', 'Pharmacist']), (req, res) => {
     const sql = `SELECT DATE_FORMAT(CreatedAt, '%d/%m') as date, SUM(TotalAmount) as revenue FROM invoices WHERE PaymentStatus = 'Paid' GROUP BY DATE(CreatedAt) ORDER BY DATE(CreatedAt) DESC LIMIT 7`;
     db.query(sql, (err, results) => {
         if (err) return res.status(500).json({ message: "Lỗi DB: " + err.message });
@@ -486,7 +485,7 @@ app.get('/api/reports/chart-revenue', authenticateToken, checkRole(['Admin', 'Nu
     });
 });
 
-app.get('/api/reports/chart-medicines', authenticateToken, checkRole(['Admin', 'Nurse']), (req, res) => {
+app.get('/api/reports/chart-medicines', authenticateToken, checkRole(['Admin', 'Cashier', 'Pharmacist']), (req, res) => {
     const sql = `SELECT MedicineName, SUM(Quantity) as total_sold FROM invoice_details GROUP BY MedicineName ORDER BY total_sold DESC LIMIT 5`;
     db.query(sql, (err, results) => {
         if (err) return res.status(500).json({ message: "Lỗi DB: " + err.message });
@@ -494,7 +493,7 @@ app.get('/api/reports/chart-medicines', authenticateToken, checkRole(['Admin', '
     });
 });
 
-app.get('/api/reports/revenue', authenticateToken, checkRole(['Admin', 'Nurse']), (req, res) => {
+app.get('/api/reports/revenue', authenticateToken, checkRole(['Admin', 'Cashier', 'Pharmacist']), (req, res) => {
     const sql = "SELECT InvoiceID, TotalAmount, CreatedAt, PaymentMethod FROM invoices WHERE PaymentStatus = 'Paid' ORDER BY CreatedAt DESC";
     db.query(sql, (err, results) => {
         if (err) return res.status(500).json({ message: "Lỗi DB: " + err.message });
@@ -533,14 +532,14 @@ app.get('/api/dashboard/stats', authenticateToken, (req, res) => {
 app.get('/api/admin/users-count', authenticateToken, checkRole(['Admin']), (req, res) => {
     db.query("SELECT Role, COUNT(*) as count FROM Users GROUP BY Role", (err, results) => {
         if (err) return res.status(500).json({ message: "Lỗi DB" });
-        let stats = { Patient: 0, Doctor: 0, Nurse: 0, Admin: 0 };
+        let stats = { Patient: 0, Doctor: 0, Nurse: 0, Receptionist: 0, Pharmacist: 0, Cashier: 0, Admin: 0 };
         results.forEach(row => stats[row.Role] = row.count);
         return res.json(stats);
     });
 });
 
 app.get('/api/admin/staff', authenticateToken, checkRole(['Admin', 'Nurse']), (req, res) => {
-    db.query("SELECT UserID, Username, Role, Room FROM Users WHERE Role IN ('Doctor', 'Nurse') ORDER BY Role, Username", (err, results) => {
+    db.query("SELECT UserID, Username, Role, Room FROM Users WHERE Role IN ('Doctor', 'Nurse', 'Receptionist', 'Pharmacist', 'Cashier') ORDER BY Role, Username", (err, results) => {
         if (err) return res.status(500).json({ message: "Lỗi DB" });
         return res.json(results);
     });

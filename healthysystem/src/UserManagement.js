@@ -22,39 +22,28 @@ const departmentsList = [
 const RoleBadge = ({ role }) => {
     const config = {
         Doctor: { bg: '#e0f2fe', text: '#0284c7', label: 'Bác sĩ' },
-        Nurse: { bg: '#ffedd5', text: '#ea580c', label: 'Y tá' },
+        Nurse: { bg: '#ffedd5', text: '#ea580c', label: 'Điều dưỡng' },
+        Receptionist: { bg: '#f3e8ff', text: '#7e22ce', label: 'Lễ tân' },
+        Pharmacist: { bg: '#dcfce7', text: '#15803d', label: 'Dược sĩ' },
+        Cashier: { bg: '#fce7f3', text: '#db2777', label: 'Thu ngân' },
         Admin: { bg: '#f1f5f9', text: '#475569', label: 'Admin' },
-        Patient: { bg: '#dcfce7', text: '#16a34a', label: 'Bệnh nhân' }
+        Patient: { bg: '#ecfeff', text: '#10b981', label: 'Bệnh nhân' }
     };
     const curr = config[role] || config.Patient;
     return <span style={{ backgroundColor: curr.bg, color: curr.text, padding: '6px 12px', borderRadius: '20px', fontSize: '12px', fontWeight: 'bold' }}>{curr.label}</span>;
 };
 
-// COMPONENT NÚT BẤM ĐƯỢC THIẾT KẾ LẠI SIÊU THANH LỊCH (OUTLINE BUTTON)
 const ActionBtn = ({ color, label, onClick }) => {
     return (
         <button
             onClick={onClick}
             style={{
-                backgroundColor: 'transparent',
-                color: color,
-                border: `1px solid ${color}`,
-                padding: '6px 12px',
-                borderRadius: '4px',
-                cursor: 'pointer',
-                fontWeight: 'bold',
-                fontSize: '12px',
-                marginRight: '6px',
-                transition: 'all 0.2s ease-in-out'
+                backgroundColor: 'transparent', color: color, border: `1px solid ${color}`,
+                padding: '6px 12px', borderRadius: '4px', cursor: 'pointer',
+                fontWeight: 'bold', fontSize: '12px', marginRight: '6px', transition: 'all 0.2s ease-in-out'
             }}
-            onMouseEnter={(e) => {
-                e.currentTarget.style.backgroundColor = color;
-                e.currentTarget.style.color = '#fff';
-            }}
-            onMouseLeave={(e) => {
-                e.currentTarget.style.backgroundColor = 'transparent';
-                e.currentTarget.style.color = color;
-            }}
+            onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = color; e.currentTarget.style.color = '#fff'; }}
+            onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; e.currentTarget.style.color = color; }}
         >
             {label}
         </button>
@@ -139,7 +128,16 @@ const UserManagement = ({ user }) => {
 
     const filteredUsers = usersList.filter(u => {
         const term = searchTerm.toLowerCase();
-        const roleName = u.Role === 'Patient' ? 'bệnh nhân' : (u.Role === 'Doctor' ? 'bác sĩ' : (u.Role === 'Nurse' ? 'y tá' : 'admin'));
+        // Cập nhật bộ máy tìm kiếm để nhận diện đúng 7 Role
+        let roleName = '';
+        if(u.Role === 'Patient') roleName = 'bệnh nhân';
+        else if(u.Role === 'Doctor') roleName = 'bác sĩ';
+        else if(u.Role === 'Nurse') roleName = 'điều dưỡng';
+        else if(u.Role === 'Receptionist') roleName = 'lễ tân';
+        else if(u.Role === 'Pharmacist') roleName = 'dược sĩ';
+        else if(u.Role === 'Cashier') roleName = 'thu ngân';
+        else roleName = 'admin';
+
         return u.Username.toLowerCase().includes(term) || roleName.includes(term) || (u.Room || '').includes(term) || u.UserID.toString().includes(term);
     });
 
@@ -155,7 +153,7 @@ const UserManagement = ({ user }) => {
             </div>
 
             <div style={{ marginBottom: '20px', display: 'flex', alignItems: 'center', backgroundColor: '#fff', borderRadius: '6px', border: '1px solid #cbd5e1', padding: '5px 15px' }}>
-                <input type="text" placeholder="Tìm theo tên, mã số, chức vụ (bác sĩ, bệnh nhân) hoặc số phòng..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} style={{ width: '100%', border: 'none', padding: '10px 0', fontSize: '14px', outline: 'none', background: 'transparent', color: '#334155' }} />
+                <input type="text" placeholder="Tìm theo tên, chức vụ (lễ tân, thu ngân, dược sĩ...) hoặc số phòng..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} style={{ width: '100%', border: 'none', padding: '10px 0', fontSize: '14px', outline: 'none', background: 'transparent', color: '#334155' }} />
             </div>
 
             <div style={{ overflowX: 'auto', borderRadius: '8px', border: '1px solid #e2e8f0', boxShadow: '0 2px 10px rgba(0,0,0,0.02)' }}>
@@ -177,12 +175,16 @@ const UserManagement = ({ user }) => {
                                 <td style={{ padding: '15px 20px' }}><RoleBadge role={u.Role} /></td>
                                 
                                 <td style={{ padding: '15px 20px', color: '#059669', fontWeight: 'bold', textAlign: 'center', fontSize: '14px' }}>
-                                    {u.Role === 'Patient' || u.Role === 'Admin' ? <span style={{ color: '#cbd5e1', fontStyle: 'italic', fontWeight: 'normal' }}>---</span> : (u.Room ? `Phòng ${u.Room}` : <span style={{ color: '#94a3b8', fontStyle: 'italic', fontWeight: 'normal' }}>Chưa xếp</span>)}
+                                    {/* Chỉ Bác sĩ và Điều dưỡng mới có Số phòng trực */}
+                                    {['Doctor', 'Nurse'].includes(u.Role) ? (
+                                        u.Room ? `Phòng ${u.Room}` : <span style={{ color: '#94a3b8', fontStyle: 'italic', fontWeight: 'normal' }}>Chưa xếp</span>
+                                    ) : (
+                                        <span style={{ color: '#cbd5e1', fontStyle: 'italic', fontWeight: 'normal' }}>---</span>
+                                    )}
                                 </td>
 
                                 <td style={{ padding: '15px 20px', textAlign: 'right' }}>
-                                    {/* SỬ DỤNG MÀU SẮC VIỀN THANH LỊCH HƠN */}
-                                    {(u.Role === 'Doctor' || u.Role === 'Nurse') && (
+                                    {['Doctor', 'Nurse'].includes(u.Role) && (
                                         <ActionBtn color="#0284c7" label={u.Room ? 'Đổi phòng' : 'Cấp phòng'} onClick={() => openRoomModal(u.UserID, u.Room)} />
                                     )}
                                     <ActionBtn color="#d97706" label="Sửa Quyền" onClick={() => openUserModal(u)} />
@@ -230,9 +232,13 @@ const UserManagement = ({ user }) => {
                             <div>
                                 <label style={{ fontWeight: 'bold', fontSize: '14px', color: '#475569' }}>Phân quyền (Role):</label>
                                 <select value={userFormData.role} onChange={e => setUserFormData({...userFormData, role: e.target.value})} style={{ width: '100%', padding: '12px', marginTop: '5px', borderRadius: '6px', border: '1px solid #cbd5e1', outline: 'none', backgroundColor: '#fff', boxSizing: 'border-box' }}>
+                                    {/* MENU ĐÃ ĐƯỢC NÂNG CẤP LÊN 7 ROLE */}
                                     <option value="Patient">Bệnh nhân (Patient)</option>
-                                    <option value="Nurse">Y tá/Thu ngân (Nurse)</option>
+                                    <option value="Receptionist">Lễ tân (Receptionist)</option>
+                                    <option value="Nurse">Điều dưỡng YHCT (Nurse)</option>
                                     <option value="Doctor">Bác sĩ (Doctor)</option>
+                                    <option value="Pharmacist">Dược sĩ (Pharmacist)</option>
+                                    <option value="Cashier">Thu ngân (Cashier)</option>
                                     <option value="Admin">Quản trị viên (Admin)</option>
                                 </select>
                             </div>
