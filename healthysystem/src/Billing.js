@@ -1,367 +1,338 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 
-const API = 'http://localhost:3001';
-const auth = () => ({ headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } });
+const API = 'http://localhost:3001/api';
+const getAuth = () => ({ headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } });
 
-const Billing = () => {
-    const role = JSON.parse(localStorage.getItem('user'))?.role;
-    const isReadOnly = role === 'Admin';
+const BHYT_COVERAGE = { 'K3_transfer': 100, 'K3': 95, 'K2': 80, 'K1': 70, 'Không có': 0 };
+const BHYT_LABELS = { 'K1': 'K1 - 70%', 'K2': 'K2 - 80%', 'K3': 'K3 - 95%', 'Không có': 'Tự chi trả' };
 
-    const [pendingList, setPendingList] = useState([]);
-    const [paidList, setPaidList] = useState([]);
-    const [activeTab, setActiveTab] = useState('pending');
-    const [selectedRecord, setSelectedRecord] = useState(null);
-    const [preview, setPreview] = useState(null);
-    const [paymentMethod, setPaymentMethod] = useState('Tiền mặt');
-    const [loading, setLoading] = useState(false);
-    const [lastInvoice, setLastInvoice] = useState(null);
-    const printRef = useRef();
+function calcBilling(examFee, medicineFee, insuranceType, transferTicket) {
+  const total = (parseFloat(examFee) || 0) + (parseFloat(medicineFee) || 0);
+  let coveragePct = 0;
+  if (insuranceType === 'K3' && transferTicket) coveragePct = 100;
+  else if (insuranceType === 'K3') coveragePct = 95;
+  else if (insuranceType === 'K2') coveragePct = 80;
+  else if (insuranceType === 'K1') coveragePct = 70;
+  const bhytPay = total * coveragePct / 100;
+  const patientPay = total - bhytPay;
+  return { total, bhytPay, patientPay, isFree: patientPay === 0, coveragePct };
+}
 
-    useEffect(() => {
-        fetchPending();
-        fetchPaid();
-    }, []);
+export default function Billing() {
+  const [tab, setTab] = useState('pending');
+  const [records, setRecords] = useState([]);
+  const [invoices, setInvoices] = useState([]);
+  const [selected, setSelected] = useState(null);
+  const [prescriptions, setPrescriptions] = useState([]);
+  const [form, setForm] = useState({ exam_fee: 150000, medicine_total: 0, insurance_type: 'Không có', transfer_ticket: false, payment_method: 'Tiền mặt' });
+  const [msg, setMsg] = useState('');
+  const [showReceipt, setShowReceipt] = useState(null);
 
-    const fetchPending = async () => {
-        try {
-            const res = await axios.get(`${API}/api/billing/pending`, auth());
-            setPendingList(res.data);
-        } catch (e) { console.error(e); }
-    };
+  useEffect(() => { loadAll(); }, []);
 
-    const fetchPaid = async () => {
-        try {
-            const res = await axios.get(`${API}/api/invoices/paid`, auth());
-            setPaidList(res.data);
-        } catch (e) { console.error(e); }
-    };
+  const loadAll = () => {
+    axios.get(`${API}/medical-records`, getAuth()).then(r => setRecords(r.data.filter(r2 => !r2.bhyt_stamp || r2.status_flow !== 'paid'))).catch(() => {});
+    axios.get(`${API}/invoices`, getAuth()).then(r => setInvoices(r.data)).catch(() => {});
+  };
 
-    const handleSelectRecord = async (record) => {
-        setSelectedRecord(record);
-        setPreview(null);
-        setLastInvoice(null);
-        try {
-            const res = await axios.get(`${API}/api/billing/preview/${record.RecordID}`, auth());
-            setPreview(res.data);
-        } catch (e) { alert('Lỗi tải thông tin hóa đơn: ' + e.message); }
-    };
+  const notify = (m) => { setMsg(m); setTimeout(() => setMsg(''), 4000); };
 
-    const isK3Free = (p) => p?.InsuranceType === 'K3' && parseInt(p?.TransferTicket) === 1;
+  const openBilling = async (record) => {
+    setSelected(record);
+    setForm({
+      exam_fee: record.exam_fee || 150000,
+      medicine_total: 0,
+      insurance_type: record.insurance_type || 'Không có',
+      transfer_ticket: record.transfer_ticket || false,
+      payment_method: 'Tiền mặt'
+    });
+    // Lấy đơn thuốc để tính tiền thuốc
+    try {
+      const r = await axios.get(`${API}/prescriptions/${record.RecordID}`, getAuth());
+      setPrescriptions(r.data);
+      const medTotal = r.data.reduce((sum, p) => sum + (p.Price || 0) * p.Quantity, 0);
+      setForm(f => ({ ...f, medicine_total: medTotal }));
+    } catch { setPrescriptions([]); }
+    setTab('checkout');
+  };
 
-    const calcTotal = (p) => {
-        if (!p) return 0;
-        if (isK3Free(p)) return 0;
-        const examFee = parseFloat(p.examFee || 50000);
-        const medTotal = parseFloat(p.medicineTotal || 0);
-        const bhytPercent = p.InsuranceType === 'K1' ? 0.3 : p.InsuranceType === 'K2' ? 0.2 : p.InsuranceType === 'K3' ? 0 : 1;
-        return (examFee + medTotal) * bhytPercent;
-    };
+  const handleStamp = async (bhytStamp) => {
+    if (!selected) return;
+    try {
+      await axios.put(`${API}/medical-records/${selected.RecordID}/stamp`, { bhyt_stamp: bhytStamp }, getAuth());
+      setSelected(s => ({ ...s, bhyt_stamp: bhytStamp }));
+      notify(`Đã đóng mộc: ${bhytStamp}`);
+    } catch (e) { notify('Lỗi đóng mộc'); }
+  };
 
-    const handleConfirmPayment = async () => {
-        if (!selectedRecord || !preview) return;
-        if (isReadOnly) return alert('Bạn chỉ có quyền xem!');
-        setLoading(true);
-        const total = calcTotal(preview);
-        try {
-            const res = await axios.post(`${API}/api/invoices`, {
-                recordId: selectedRecord.RecordID,
-                examFee: preview.examFee,
-                medicineTotal: preview.medicineTotal,
-                totalAmount: total,
-                paymentMethod,
-                details: preview.details?.map(d => ({
-                    MedicineName: d.MedicineName,
-                    Quantity: d.Quantity,
-                    Price: d.Price,
-                    SubTotal: d.SubTotal
-                }))
-            }, auth());
+  const handleCheckout = async () => {
+    if (!selected) return;
+    try {
+      const res = await axios.post(`${API}/invoices`, {
+        record_id: selected.RecordID,
+        patient_id: selected.PatientID,
+        ...form
+      }, getAuth());
+      setShowReceipt({ ...selected, ...form, ...res.data });
+      notify('Thanh toán thành công!');
+      loadAll();
+      setTab('history');
+    } catch (e) { notify(e.response?.data?.error || 'Lỗi thanh toán'); }
+  };
 
-            setLastInvoice({
-                invoiceId: res.data.invoiceId,
-                patient: selectedRecord,
-                preview,
-                total,
-                paymentMethod,
-                isK3: isK3Free(preview)
-            });
+  const billing = selected ? calcBilling(form.exam_fee, form.medicine_total, form.insurance_type, form.transfer_ticket) : null;
 
-            await fetchPending();
-            await fetchPaid();
-            setSelectedRecord(null);
-            setPreview(null);
-            alert(`Thanh toán thành công! Mã hóa đơn: #${res.data.invoiceId}`);
-        } catch (err) {
-            alert('Lỗi thanh toán: ' + (err.response?.data?.message || err.message));
-        }
-        setLoading(false);
-    };
+  // Phân loại bệnh án: chờ đóng mộc (chưa có stamp) và chờ thu tiền (đã stamp)
+  const pendingStamp = records.filter(r => !r.bhyt_stamp);
+  const pendingPayment = records.filter(r => r.bhyt_stamp);
 
-    const handlePrint = () => {
-        const content = printRef.current?.innerHTML;
-        if (!content) return;
-        const win = window.open('', '_blank');
-        win.document.write(`<html><head><title>Phiếu Thu Viện Phí</title>
-        <style>
-            body { font-family: Arial, sans-serif; padding: 30px; font-size: 13px; color: #000; }
-            h2, h3 { text-align: center; margin: 4px 0; }
-            table { width: 100%; border-collapse: collapse; margin: 10px 0; }
-            td, th { border: 1px solid #555; padding: 7px 10px; }
-            th { background: #f0f0f0; }
-            .total-row td { font-weight: bold; font-size: 15px; }
-            .stamp { border: 3px solid green; display: inline-block; padding: 8px 16px; color: green; font-weight: bold; font-size: 16px; transform: rotate(-15deg); margin: 10px 0; }
-            hr { border: 1px solid #999; }
-        </style>
-        </head><body>${content}</body></html>`);
-        win.document.close();
-        win.print();
-    };
+  return (
+    <div style={{ padding: 20, maxWidth: 1100, margin: '0 auto' }}>
+      <h2 style={{ color: '#c0392b', marginBottom: 4 }}>Quầy Thu Viện Phí & Thanh Toán BHYT</h2>
+      {msg && <div style={{ background: '#d4edda', color: '#155724', padding: '8px 16px', borderRadius: 6, marginBottom: 12 }}>{msg}</div>}
 
-    const tabBtn = (t, label) => (
-        <button onClick={() => setActiveTab(t)} style={{
-            padding: '10px 20px', border: 'none', cursor: 'pointer', fontWeight: 'bold',
-            borderBottom: activeTab === t ? '3px solid #e67e22' : '3px solid transparent',
-            background: 'transparent', color: activeTab === t ? '#e67e22' : '#7f8c8d'
-        }}>{label}</button>
-    );
+      <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+        {[['pending', `Chờ xử lý (${records.length})`], ['checkout', 'Thanh toán'], ['history', `Lịch sử (${invoices.length})`]].map(([key, label]) => (
+          <button key={key} onClick={() => setTab(key)}
+            style={{ padding: '8px 18px', borderRadius: 6, border: 'none', cursor: 'pointer',
+              background: tab === key ? '#c0392b' : '#eee', color: tab === key ? '#fff' : '#333', fontWeight: tab === key ? 700 : 400 }}>
+            {label}
+          </button>
+        ))}
+      </div>
 
-    const bhytLabel = (type, ticket) => {
-        if (type === 'K3' && parseInt(ticket) === 1) return { text: 'BHYT K3 – MIỄN PHÍ 100%', color: '#27ae60' };
-        if (type === 'K3') return { text: 'BHYT K3 (không chuyển tuyến)', color: '#e67e22' };
-        if (type === 'K2') return { text: 'BHYT K2 – 80%', color: '#3498db' };
-        if (type === 'K1') return { text: 'BHYT K1 – 70%', color: '#9b59b6' };
-        return { text: 'Không BHYT – Tự thanh toán', color: '#e74c3c' };
-    };
-
-    return (
-        <div style={{ padding: '20px', fontFamily: 'Arial, sans-serif' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-                <h2 style={{ color: '#e67e22', margin: 0 }}>
-                    Thanh Toán Viện Phí BHYT {isReadOnly && <span style={{ fontSize: '14px', color: '#aaa' }}>(Chỉ Xem)</span>}
-                </h2>
-                {lastInvoice && (
-                    <button onClick={handlePrint} style={{ background: '#27ae60', color: '#fff', border: 'none', padding: '10px 20px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>
-                        In Phiếu Thu Gần Nhất
-                    </button>
-                )}
-            </div>
-
-            <div style={{ display: 'flex', borderBottom: '2px solid #e0e0e0', marginBottom: '16px' }}>
-                {tabBtn('pending', `Chờ Thanh Toán (${pendingList.length})`)}
-                {tabBtn('paid', `Đã Thanh Toán (${paidList.length})`)}
-            </div>
-
-            {activeTab === 'pending' && (
-                <div style={{ display: 'flex', gap: '20px' }}>
-                    {/* DANH SÁCH CHỜ */}
-                    <div style={{ width: '340px', background: '#fff', border: '1px solid #ddd', borderRadius: '8px', overflow: 'hidden' }}>
-                        <div style={{ background: '#e67e22', color: '#fff', padding: '12px 15px', fontWeight: 'bold' }}>
-                            Hồ Sơ Chờ Thanh Toán
-                        </div>
-                        {pendingList.length === 0 && <p style={{ padding: '15px', color: '#aaa', textAlign: 'center' }}>Không có hồ sơ cần thanh toán.</p>}
-                        <ul style={{ listStyle: 'none', padding: 0, margin: 0, maxHeight: '500px', overflowY: 'auto' }}>
-                            {pendingList.map(r => (
-                                <li key={r.RecordID}
-                                    onClick={() => handleSelectRecord(r)}
-                                    style={{
-                                        padding: '12px 15px', borderBottom: '1px solid #f0f0f0', cursor: 'pointer',
-                                        background: selectedRecord?.RecordID === r.RecordID ? '#fff7f0' : '#fff',
-                                        borderLeft: selectedRecord?.RecordID === r.RecordID ? '4px solid #e67e22' : '4px solid transparent'
-                                    }}>
-                                    <div style={{ fontWeight: 'bold' }}>{r.PatientName}</div>
-                                    <div style={{ fontSize: '12px', color: '#e67e22', marginTop: '3px' }}>{r.Diagnosis}</div>
-                                    <div style={{ fontSize: '11px', color: '#aaa' }}>Mã HB: #{r.RecordID} | {new Date(r.CreatedAt).toLocaleDateString('vi-VN')}</div>
-                                </li>
-                            ))}
-                        </ul>
-                    </div>
-
-                    {/* CHI TIẾT THANH TOÁN */}
-                    <div style={{ flex: 1 }}>
-                        {!selectedRecord || !preview ? (
-                            <div style={{ background: '#fff', padding: '60px', textAlign: 'center', color: '#aaa', border: '1px solid #ddd', borderRadius: '8px' }}>
-                                Chọn hồ sơ bệnh án để xem chi tiết và xử lý thanh toán.
-                            </div>
-                        ) : (
-                            <div style={{ background: '#fff', border: '1px solid #ddd', borderRadius: '8px', padding: '20px' }}>
-                                {/* THÔNG TIN BỆNH NHÂN */}
-                                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '16px', paddingBottom: '16px', borderBottom: '1px solid #f0f0f0' }}>
-                                    <div>
-                                        <div style={{ fontWeight: 'bold', fontSize: '16px' }}>{selectedRecord.PatientName}</div>
-                                        <div style={{ color: '#7f8c8d', fontSize: '13px', marginTop: '4px' }}>Chẩn đoán: {selectedRecord.Diagnosis}</div>
-                                    </div>
-                                    <div style={{ textAlign: 'right' }}>
-                                        {(() => {
-                                            const lbl = bhytLabel(preview.InsuranceType, preview.TransferTicket);
-                                            return <span style={{ background: lbl.color + '20', color: lbl.color, padding: '6px 14px', borderRadius: '16px', fontWeight: 'bold', fontSize: '13px' }}>{lbl.text}</span>;
-                                        })()}
-                                    </div>
-                                </div>
-
-                                {/* BẢNG DỊCH VỤ */}
-                                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px', marginBottom: '16px' }}>
-                                    <thead>
-                                        <tr style={{ background: '#f8f9fa' }}>
-                                            <th style={{ padding: '10px', textAlign: 'left' }}>Dịch Vụ / Thuốc</th>
-                                            <th style={{ padding: '10px', textAlign: 'center' }}>Số Lượng</th>
-                                            <th style={{ padding: '10px', textAlign: 'right' }}>Đơn Giá</th>
-                                            <th style={{ padding: '10px', textAlign: 'right' }}>Thành Tiền</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        <tr style={{ borderBottom: '1px solid #f0f0f0' }}>
-                                            <td style={{ padding: '10px' }}>Phí Khám Bệnh</td>
-                                            <td style={{ padding: '10px', textAlign: 'center' }}>1</td>
-                                            <td style={{ padding: '10px', textAlign: 'right' }}>{parseFloat(preview.examFee).toLocaleString('vi-VN')} đ</td>
-                                            <td style={{ padding: '10px', textAlign: 'right' }}>{parseFloat(preview.examFee).toLocaleString('vi-VN')} đ</td>
-                                        </tr>
-                                        {preview.details?.map((d, i) => (
-                                            <tr key={i} style={{ borderBottom: '1px solid #f0f0f0' }}>
-                                                <td style={{ padding: '10px' }}>{d.MedicineName}</td>
-                                                <td style={{ padding: '10px', textAlign: 'center' }}>{d.Quantity}</td>
-                                                <td style={{ padding: '10px', textAlign: 'right' }}>{parseFloat(d.Price).toLocaleString('vi-VN')} đ</td>
-                                                <td style={{ padding: '10px', textAlign: 'right' }}>{parseFloat(d.SubTotal).toLocaleString('vi-VN')} đ</td>
-                                            </tr>
-                                        ))}
-                                    </tbody>
-                                </table>
-
-                                {/* TỔNG TIỀN */}
-                                <div style={{ background: isK3Free(preview) ? '#e8f8f5' : '#fff7f0', border: `2px solid ${isK3Free(preview) ? '#27ae60' : '#e67e22'}`, borderRadius: '8px', padding: '16px', marginBottom: '16px' }}>
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px', fontSize: '13px' }}>
-                                        <span>Phí khám:</span>
-                                        <span>{parseFloat(preview.examFee).toLocaleString('vi-VN')} đ</span>
-                                    </div>
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px', fontSize: '13px' }}>
-                                        <span>Tiền thuốc:</span>
-                                        <span>{parseFloat(preview.medicineTotal || 0).toLocaleString('vi-VN')} đ</span>
-                                    </div>
-                                    {isK3Free(preview) && (
-                                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px', fontSize: '13px', color: '#27ae60' }}>
-                                            <span>BHYT K3 + Chuyển tuyến hợp lệ:</span>
-                                            <span>- {(parseFloat(preview.examFee) + parseFloat(preview.medicineTotal || 0)).toLocaleString('vi-VN')} đ</span>
-                                        </div>
-                                    )}
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '2px solid', paddingTop: '10px', marginTop: '10px', borderColor: isK3Free(preview) ? '#27ae60' : '#e67e22' }}>
-                                        <span style={{ fontWeight: 'bold', fontSize: '16px' }}>TỔNG BỆNH NHÂN TRẢ:</span>
-                                        <span style={{ fontWeight: 'bold', fontSize: '22px', color: isK3Free(preview) ? '#27ae60' : '#e74c3c' }}>
-                                            {calcTotal(preview).toLocaleString('vi-VN')} VNĐ
-                                        </span>
-                                    </div>
-                                </div>
-
-                                {/* PHƯƠNG THỨC THANH TOÁN */}
-                                {!isReadOnly && (
-                                    <>
-                                        <div style={{ marginBottom: '16px' }}>
-                                            <label style={{ fontWeight: 'bold', display: 'block', marginBottom: '6px' }}>Hình Thức Thanh Toán</label>
-                                            <select value={paymentMethod} onChange={e => setPaymentMethod(e.target.value)}
-                                                style={{ width: '200px', padding: '10px', border: '1px solid #bdc3c7', borderRadius: '4px', fontSize: '14px' }}>
-                                                <option>Tiền mặt</option>
-                                                <option>Chuyển khoản</option>
-                                                <option>Quét QR</option>
-                                                <option>BHYT (Miễn phí)</option>
-                                            </select>
-                                        </div>
-
-                                        {isK3Free(preview) ? (
-                                            <button onClick={handleConfirmPayment} disabled={loading}
-                                                style={{ width: '100%', padding: '14px', background: '#27ae60', color: '#fff', border: 'none', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer', fontSize: '15px' }}>
-                                                XÁC NHẬN BHYT 100% & IN PHIẾU LĨNH THUỐC
-                                            </button>
-                                        ) : (
-                                            <button onClick={handleConfirmPayment} disabled={loading}
-                                                style={{ width: '100%', padding: '14px', background: '#e67e22', color: '#fff', border: 'none', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer', fontSize: '15px' }}>
-                                                CHỐT HÓA ĐƠN — {calcTotal(preview).toLocaleString('vi-VN')} VNĐ
-                                            </button>
-                                        )}
-                                    </>
-                                )}
-                            </div>
-                        )}
-                    </div>
-                </div>
-            )}
-
-            {/* TAB ĐÃ THANH TOÁN */}
-            {activeTab === 'paid' && (
-                <div style={{ background: '#fff', borderRadius: '8px', border: '1px solid #ddd', overflow: 'hidden' }}>
-                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
-                        <thead>
-                            <tr style={{ background: '#27ae60', color: '#fff' }}>
-                                <th style={{ padding: '12px 16px', textAlign: 'left' }}>Mã HĐ</th>
-                                <th style={{ padding: '12px' }}>Bệnh Nhân</th>
-                                <th style={{ padding: '12px', textAlign: 'right' }}>Số Tiền</th>
-                                <th style={{ padding: '12px' }}>Phương Thức</th>
-                                <th style={{ padding: '12px' }}>Thời Gian</th>
-                                <th style={{ padding: '12px' }}>Loại</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {paidList.map((inv, i) => (
-                                <tr key={inv.InvoiceID} style={{ borderBottom: '1px solid #f0f0f0', background: i % 2 === 0 ? '#fff' : '#fafafa' }}>
-                                    <td style={{ padding: '11px 16px', color: '#888' }}>#{inv.InvoiceID}</td>
-                                    <td style={{ padding: '11px', textAlign: 'center', fontWeight: 'bold' }}>{inv.PatientName}</td>
-                                    <td style={{ padding: '11px', textAlign: 'right', fontWeight: 'bold', color: parseFloat(inv.TotalAmount) === 0 ? '#27ae60' : '#e74c3c' }}>
-                                        {parseFloat(inv.TotalAmount) === 0 ? 'MIỄN PHÍ' : parseFloat(inv.TotalAmount).toLocaleString('vi-VN') + ' đ'}
-                                    </td>
-                                    <td style={{ padding: '11px', textAlign: 'center' }}>{inv.PaymentMethod}</td>
-                                    <td style={{ padding: '11px', textAlign: 'center', color: '#aaa', fontSize: '12px' }}>{new Date(inv.CreatedAt).toLocaleString('vi-VN')}</td>
-                                    <td style={{ padding: '11px', textAlign: 'center' }}>
-                                        <span style={{ padding: '3px 10px', borderRadius: '12px', fontSize: '11px', fontWeight: 'bold', background: parseFloat(inv.TotalAmount) === 0 ? '#e8f8f5' : '#fff7f0', color: parseFloat(inv.TotalAmount) === 0 ? '#27ae60' : '#e67e22' }}>
-                                            {parseFloat(inv.TotalAmount) === 0 ? 'K3 MIỄN PHÍ' : 'TỰ TRẢ'}
-                                        </span>
-                                    </td>
-                                </tr>
-                            ))}
-                            {paidList.length === 0 && (
-                                <tr><td colSpan={6} style={{ padding: '20px', textAlign: 'center', color: '#aaa' }}>Chưa có hóa đơn nào.</td></tr>
-                            )}
-                        </tbody>
-                    </table>
-                </div>
-            )}
-
-            {/* PHIẾU IN ẨN */}
-            <div ref={printRef} style={{ display: 'none' }}>
-                {lastInvoice && (
-                    <div>
-                        <h2>BỆNH VIỆN Y DƯỢC CỔ TRUYỀN KIÊN GIANG</h2>
-                        <h3>PHIẾU THU VIỆN PHÍ</h3>
-                        <p style={{ textAlign: 'center', color: '#888' }}>Số 64 Đống Đa, Rạch Giá, An Giang | ĐT: 0297.3862.161</p>
-                        <hr />
-                        <p><strong>Mã hóa đơn:</strong> #{lastInvoice.invoiceId}</p>
-                        <p><strong>Bệnh nhân:</strong> {lastInvoice.patient?.PatientName}</p>
-                        <p><strong>Chẩn đoán:</strong> {lastInvoice.patient?.Diagnosis}</p>
-                        <p><strong>Ngày thanh toán:</strong> {new Date().toLocaleString('vi-VN')}</p>
-                        <p><strong>Hình thức:</strong> {lastInvoice.paymentMethod}</p>
-                        <hr />
-                        <table>
-                            <thead><tr><th>Dịch Vụ</th><th>SL</th><th>Đơn Giá</th><th>Thành Tiền</th></tr></thead>
-                            <tbody>
-                                <tr><td>Phí Khám Bệnh</td><td>1</td><td>{parseFloat(lastInvoice.preview?.examFee || 0).toLocaleString('vi-VN')} đ</td><td>{parseFloat(lastInvoice.preview?.examFee || 0).toLocaleString('vi-VN')} đ</td></tr>
-                                {lastInvoice.preview?.details?.map((d, i) => (
-                                    <tr key={i}><td>{d.MedicineName}</td><td>{d.Quantity}</td><td>{parseFloat(d.Price).toLocaleString('vi-VN')} đ</td><td>{parseFloat(d.SubTotal).toLocaleString('vi-VN')} đ</td></tr>
-                                ))}
-                                <tr className="total-row"><td colSpan={3}><strong>TỔNG CỘNG</strong></td><td><strong>{lastInvoice.total.toLocaleString('vi-VN')} VNĐ</strong></td></tr>
-                            </tbody>
-                        </table>
-                        {lastInvoice.isK3 && (
-                            <div style={{ textAlign: 'center', margin: '16px 0' }}>
-                                <div className="stamp">BHYT K3 – MIỄN PHÍ 100%</div>
-                                <p><em>Bệnh nhân không phải đóng bất kỳ khoản phí nào. Mang phiếu này đến quầy Dược để nhận thuốc.</em></p>
-                            </div>
-                        )}
-                        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '30px' }}>
-                            <div style={{ textAlign: 'center' }}><p><strong>Bệnh nhân</strong></p><p style={{ marginTop: '40px' }}>(Ký tên)</p></div>
-                            <div style={{ textAlign: 'center' }}><p><strong>Thu Ngân</strong></p><p style={{ marginTop: '40px' }}>(Ký và ghi họ tên)</p></div>
-                        </div>
-                    </div>
-                )}
-            </div>
+      {tab === 'pending' && (
+        <div style={{ display: 'grid', gap: 16 }}>
+          {/* Chờ đóng mộc */}
+          <div>
+            <div style={{ fontWeight: 700, color: '#e67e22', marginBottom: 8 }}>Chờ đóng mộc BHYT ({pendingStamp.length})</div>
+            {!pendingStamp.length && <div style={{ color: '#999', fontSize: 13 }}>Không có phiếu chờ đóng mộc</div>}
+            {pendingStamp.map(r => (
+              <RecordCard key={r.RecordID} record={r} onOpen={openBilling} status="stamp" />
+            ))}
+          </div>
+          <div>
+            <div style={{ fontWeight: 700, color: '#27ae60', marginBottom: 8 }}>Đã đóng mộc - chờ thu tiền ({pendingPayment.length})</div>
+            {!pendingPayment.length && <div style={{ color: '#999', fontSize: 13 }}>Không có phiếu chờ thu tiền</div>}
+            {pendingPayment.map(r => (
+              <RecordCard key={r.RecordID} record={r} onOpen={openBilling} status="pay" />
+            ))}
+          </div>
         </div>
-    );
-};
+      )}
 
-export default Billing;
+      {tab === 'checkout' && (
+        <div>
+          {!selected ? (
+            <div style={{ textAlign: 'center', padding: 60, color: '#999' }}>Chọn bệnh nhân từ tab <strong>Chờ xử lý</strong></div>
+          ) : (
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
+              {/* Thông tin */}
+              <div>
+                <div style={{ background: '#f8f9fa', border: '1px solid #dee2e6', borderRadius: 8, padding: 16, marginBottom: 16 }}>
+                  <div style={{ fontWeight: 700, color: '#c0392b', marginBottom: 12 }}>Thông tin bệnh nhân</div>
+                  {[['Bệnh nhân', selected.patient_name], ['Chẩn đoán', selected.Diagnosis], ['ICD-10', selected.ICD10 || '-'], ['Phiếu khám', selected.exam_ticket || '-'], ['Mộc BHYT', selected.bhyt_stamp || 'Chưa đóng mộc']].map(([k, v]) => (
+                    <div key={k} style={{ display: 'flex', marginBottom: 6, fontSize: 13 }}>
+                      <span style={{ color: '#666', width: 100 }}>{k}:</span>
+                      <span style={{ fontWeight: 600 }}>{v}</span>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Đóng mộc BHYT */}
+                {!selected.bhyt_stamp && (
+                  <div style={{ background: '#fff3cd', border: '1px solid #ffc107', borderRadius: 8, padding: 16, marginBottom: 16 }}>
+                    <div style={{ fontWeight: 700, marginBottom: 10 }}>Đóng mộc BHYT</div>
+                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                      {['BHYT-100%', 'BHYT-95%', 'BHYT-80%', 'BHYT-70%', 'Tự chi trả'].map(stamp => (
+                        <button key={stamp} onClick={() => handleStamp(stamp)}
+                          style={{ padding: '6px 14px', background: stamp === 'BHYT-100%' ? '#27ae60' : '#2980b9', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 600 }}>
+                          {stamp}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Đơn thuốc */}
+                {prescriptions.length > 0 && (
+                  <div style={{ background: '#fff', border: '1px solid #dee2e6', borderRadius: 8, padding: 16 }}>
+                    <div style={{ fontWeight: 700, color: '#c0392b', marginBottom: 10 }}>Đơn thuốc ({prescriptions.length} loại)</div>
+                    {prescriptions.map((p, i) => (
+                      <div key={i} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginBottom: 6 }}>
+                        <span>{p.medicine_name} × {p.Quantity} {p.Unit}</span>
+                        <span style={{ fontWeight: 600 }}>{((p.Price || 0) * p.Quantity).toLocaleString('vi-VN')}đ</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Thanh toán */}
+              <div>
+                <div style={{ background: '#fff', border: '1px solid #dee2e6', borderRadius: 8, padding: 16 }}>
+                  <div style={{ fontWeight: 700, fontSize: 15, color: '#c0392b', marginBottom: 16 }}>Tính viện phí</div>
+
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 14 }}>
+                    <div>
+                      <label style={{ fontWeight: 600, display: 'block', marginBottom: 4, fontSize: 13 }}>Phí khám (VNĐ)</label>
+                      <input type="number" value={form.exam_fee} onChange={e => setForm(f => ({ ...f, exam_fee: e.target.value }))}
+                        style={{ width: '100%', padding: '8px 10px', border: '1px solid #ddd', borderRadius: 6, boxSizing: 'border-box' }} />
+                    </div>
+                    <div>
+                      <label style={{ fontWeight: 600, display: 'block', marginBottom: 4, fontSize: 13 }}>Tiền thuốc (VNĐ)</label>
+                      <input type="number" value={form.medicine_total} onChange={e => setForm(f => ({ ...f, medicine_total: e.target.value }))}
+                        style={{ width: '100%', padding: '8px 10px', border: '1px solid #ddd', borderRadius: 6, boxSizing: 'border-box' }} />
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 14 }}>
+                    <div>
+                      <label style={{ fontWeight: 600, display: 'block', marginBottom: 4, fontSize: 13 }}>Loại BHYT</label>
+                      <select value={form.insurance_type} onChange={e => setForm(f => ({ ...f, insurance_type: e.target.value }))}
+                        style={{ width: '100%', padding: '8px 10px', border: '1px solid #ddd', borderRadius: 6 }}>
+                        {Object.entries(BHYT_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label style={{ fontWeight: 600, display: 'block', marginBottom: 4, fontSize: 13 }}>Hình thức thanh toán</label>
+                      <select value={form.payment_method} onChange={e => setForm(f => ({ ...f, payment_method: e.target.value }))}
+                        style={{ width: '100%', padding: '8px 10px', border: '1px solid #ddd', borderRadius: 6 }}>
+                        {['Tiền mặt', 'Chuyển khoản', 'QR Code'].map(m => <option key={m}>{m}</option>)}
+                      </select>
+                    </div>
+                  </div>
+
+                  <div style={{ marginBottom: 16 }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 600, cursor: 'pointer', fontSize: 13 }}>
+                      <input type="checkbox" checked={form.transfer_ticket} onChange={e => setForm(f => ({ ...f, transfer_ticket: e.target.checked }))} />
+                      Có giấy chuyển tuyến hợp lệ
+                    </label>
+                  </div>
+
+                  {/* Bảng tính tiền */}
+                  {billing && (
+                    <div style={{ background: billing.isFree ? '#d4edda' : '#f8f9fa', border: `2px solid ${billing.isFree ? '#28a745' : '#dee2e6'}`, borderRadius: 8, padding: 16, marginBottom: 16 }}>
+                      <table style={{ width: '100%', fontSize: 14 }}>
+                        <tbody>
+                          <tr>
+                            <td style={{ padding: '4px 0', color: '#666' }}>Tổng chi phí:</td>
+                            <td style={{ textAlign: 'right', fontWeight: 600 }}>{billing.total.toLocaleString('vi-VN')} đ</td>
+                          </tr>
+                          <tr>
+                            <td style={{ padding: '4px 0', color: '#666' }}>BHYT thanh toán ({billing.coveragePct}%):</td>
+                            <td style={{ textAlign: 'right', fontWeight: 600, color: '#27ae60' }}>{billing.bhytPay.toLocaleString('vi-VN')} đ</td>
+                          </tr>
+                          <tr style={{ borderTop: '2px solid #dee2e6' }}>
+                            <td style={{ padding: '8px 0 4px', fontWeight: 700, fontSize: 15 }}>Bệnh nhân trả:</td>
+                            <td style={{ textAlign: 'right', fontWeight: 900, fontSize: 18, color: billing.isFree ? '#27ae60' : '#c0392b' }}>
+                              {billing.patientPay.toLocaleString('vi-VN')} đ
+                              {billing.isFree && ' (MIỄN PHÍ)'}
+                            </td>
+                          </tr>
+                        </tbody>
+                      </table>
+                      {billing.isFree && (
+                        <div style={{ marginTop: 10, textAlign: 'center', fontWeight: 700, color: '#155724', fontSize: 14 }}>
+                          BHYT K3 + Chuyển tuyến → Miễn phí 100%
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  <button onClick={handleCheckout}
+                    style={{ width: '100%', padding: '14px', border: 'none', borderRadius: 8, cursor: 'pointer', fontWeight: 700, fontSize: 15,
+                      background: billing?.isFree ? '#27ae60' : '#c0392b', color: '#fff' }}>
+                    {billing?.isFree ? 'XÁC NHẬN BHYT 100% & IN PHIẾU LĨNH THUỐC' : 'CHỐT HÓA ĐƠN & THANH TOÁN'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {tab === 'history' && (
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+            <thead>
+              <tr style={{ background: '#c0392b', color: '#fff' }}>
+                {['#', 'Bệnh nhân', 'BHYT', 'Chuyển tuyến', 'Tổng phí', 'BN trả', 'Miễn phí', 'Phiếu thuốc', 'Ngày'].map(h => (
+                  <th key={h} style={{ padding: '10px 8px', textAlign: 'left', whiteSpace: 'nowrap' }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {invoices.map((inv, i) => (
+                <tr key={inv.InvoiceID} style={{ borderBottom: '1px solid #eee', background: inv.is_free ? '#f0fff4' : i % 2 === 0 ? '#fff' : '#fafafa' }}>
+                  <td style={{ padding: '8px' }}>{inv.InvoiceID}</td>
+                  <td style={{ padding: '8px', fontWeight: 600 }}>{inv.patient_name}</td>
+                  <td style={{ padding: '8px' }}>{inv.insurance_type}</td>
+                  <td style={{ padding: '8px', textAlign: 'center' }}>{inv.transfer_ticket ? '✓' : '-'}</td>
+                  <td style={{ padding: '8px' }}>{((inv.ExamFee || 0) + (inv.MedicineTotal || 0)).toLocaleString('vi-VN')}đ</td>
+                  <td style={{ padding: '8px', fontWeight: 700, color: inv.is_free ? '#27ae60' : '#c0392b' }}>{(inv.TotalAmount || 0).toLocaleString('vi-VN')}đ</td>
+                  <td style={{ padding: '8px', textAlign: 'center' }}>{inv.is_free ? <span style={{ color: '#27ae60', fontWeight: 700 }}>100%</span> : '-'}</td>
+                  <td style={{ padding: '8px', fontSize: 11 }}>{inv.drug_voucher || '-'}</td>
+                  <td style={{ padding: '8px', whiteSpace: 'nowrap' }}>{inv.CreatedAt ? new Date(inv.CreatedAt).toLocaleDateString('vi-VN') : '-'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {!invoices.length && <div style={{ textAlign: 'center', padding: 40, color: '#999' }}>Chưa có lịch sử thanh toán</div>}
+        </div>
+      )}
+
+      {/* Phiếu thanh toán / Phiếu lĩnh thuốc */}
+      {showReceipt && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{ background: '#fff', padding: 32, borderRadius: 8, minWidth: 400, maxWidth: 480, boxShadow: '0 8px 40px rgba(0,0,0,0.25)' }}>
+            <div style={{ textAlign: 'center', borderBottom: '2px solid #c0392b', paddingBottom: 12, marginBottom: 16 }}>
+              <div style={{ fontWeight: 700, fontSize: 14 }}>BỆNH VIỆN Y DƯỢC CỔ TRUYỀN KIÊN GIANG</div>
+            </div>
+            <div style={{ textAlign: 'center', fontWeight: 700, fontSize: 16, color: '#c0392b', marginBottom: 16 }}>
+              {showReceipt.isFree ? 'PHIẾU LĨNH THUỐC MIỄN PHÍ' : 'PHIẾU THU VIỆN PHÍ'}
+            </div>
+            <table style={{ width: '100%', fontSize: 13, marginBottom: 16 }}>
+              <tbody>
+                {[['Bệnh nhân', showReceipt.patient_name], ['Mã phiếu thuốc', showReceipt.drugVoucher || '-'], ['BHYT', showReceipt.insurance_type], ['Chuyển tuyến', showReceipt.transfer_ticket ? 'Có' : 'Không'], ['Tổng phí', `${((parseFloat(showReceipt.exam_fee) || 0) + (parseFloat(showReceipt.medicine_total) || 0)).toLocaleString('vi-VN')} đ`], ['BHYT trả', `${showReceipt.bhytCoverage?.toLocaleString('vi-VN') || 0} đ`], ['Bệnh nhân trả', `${showReceipt.totalAmount?.toLocaleString('vi-VN') || 0} đ`]].map(([k, v]) => (
+                  <tr key={k}>
+                    <td style={{ padding: '4px 0', color: '#666', width: 120 }}>{k}:</td>
+                    <td style={{ padding: '4px 0', fontWeight: 600 }}>{v}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {showReceipt.isFree && (
+              <div style={{ background: '#d4edda', border: '2px solid #28a745', borderRadius: 6, padding: '10px', textAlign: 'center', color: '#155724', fontWeight: 700, marginBottom: 16 }}>
+                BHYT K3 - MIỄN PHÍ 100%<br />
+                <span style={{ fontSize: 12, fontWeight: 400 }}>Mang phiếu này ra quầy thuốc để nhận thuốc miễn phí</span>
+              </div>
+            )}
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'center' }}>
+              <button onClick={() => window.print()} style={{ padding: '8px 20px', background: '#c0392b', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 700 }}>In phiếu</button>
+              <button onClick={() => setShowReceipt(null)} style={{ padding: '8px 20px', background: '#95a5a6', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer' }}>Đóng</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function RecordCard({ record, onOpen, status }) {
+  return (
+    <div style={{ border: '1px solid #e0e0e0', borderRadius: 8, padding: 14, marginBottom: 10, display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#fff', boxShadow: '0 1px 4px rgba(0,0,0,0.05)' }}>
+      <div>
+        <div style={{ fontWeight: 700 }}>{record.patient_name}</div>
+        <div style={{ fontSize: 13, color: '#666' }}>Chẩn đoán: {record.Diagnosis}</div>
+        <div style={{ fontSize: 13, color: '#666' }}>BHYT: {record.insurance_type} {record.transfer_ticket ? '| Chuyển tuyến ✓' : ''}</div>
+        {record.bhyt_stamp && <span style={{ fontSize: 11, background: '#d4edda', color: '#155724', padding: '2px 8px', borderRadius: 10, fontWeight: 600 }}>{record.bhyt_stamp}</span>}
+      </div>
+      <button onClick={() => onOpen(record)}
+        style={{ padding: '8px 18px', background: status === 'stamp' ? '#e67e22' : '#c0392b', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 600, whiteSpace: 'nowrap' }}>
+        {status === 'stamp' ? 'Đóng mộc & Thu tiền' : 'Thu tiền'}
+      </button>
+    </div>
+  );
+}

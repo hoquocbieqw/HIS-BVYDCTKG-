@@ -1,476 +1,319 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 
-const API = 'http://localhost:3001';
+const API = 'http://localhost:3001/api';
+const getAuth = () => ({ headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } });
 
-const icd10Dictionary = [
-    { code: 'M54.2', name: 'Đau cổ (Cervicalgia)' },
-    { code: 'M54.5', name: 'Đau lưng vùng thấp (Low back pain)' },
-    { code: 'M54.4', name: 'Đau thắt lưng với đau thần kinh tọa' },
-    { code: 'M47.8', name: 'Thoái hóa cột sống cổ' },
-    { code: 'M51.1', name: 'Thoát vị đĩa đệm cột sống thắt lưng' },
-    { code: 'M75.1', name: 'Hội chứng vai gáy (Rotator cuff syndrome)' },
-    { code: 'I10', name: 'Tăng huyết áp vô căn (nguyên phát)' },
-    { code: 'E11', name: 'Đái tháo đường không phụ thuộc insulin' },
-    { code: 'M15', name: 'Thoái hóa đa khớp' },
-    { code: 'G51.0', name: 'Liệt Bell (Liệt dây thần kinh số VII ngoại biên)' },
-    { code: 'F41.1', name: 'Rối loạn lo âu lan tỏa' },
-    { code: 'R51', name: 'Đau đầu' },
+const TECHNIQUE_OPTIONS = ['Châm cứu', 'Điện châm', 'Xoa bóp bấm huyệt', 'Kéo cột sống cổ', 'Kéo cột sống thắt lưng', 'Cấy chỉ', 'Xông hơi thuốc', 'Dưỡng sinh'];
+const ICD10_COMMON = [
+  { code: 'M54.2', name: 'Đau cổ' }, { code: 'M54.5', name: 'Đau thắt lưng' },
+  { code: 'M47.8', name: 'Thoái hóa cột sống' }, { code: 'M51.1', name: 'Thoát vị đĩa đệm' },
+  { code: 'M79.3', name: 'Đau khớp vai' }, { code: 'M16', name: 'Thoái hóa khớp háng' },
+  { code: 'G54.2', name: 'Đau dây thần kinh' }, { code: 'M25.5', name: 'Đau khớp' },
 ];
 
-const availableServices = [
-    'Châm cứu', 'Xoa bóp bấm huyệt', 'Kéo giãn cột sống cổ', 'Kéo giãn cột sống thắt lưng',
-    'Điện châm', 'Cứu ngải', 'Chiếu đèn hồng ngoại', 'Cấy chỉ', 'Dưỡng sinh', 'Vật lý trị liệu'
-];
+export default function MedicalRecords() {
+  const [tab, setTab] = useState('queue');
+  const [queue, setQueue] = useState([]);
+  const [records, setRecords] = useState([]);
+  const [medicines, setMedicines] = useState([]);
+  const [selected, setSelected] = useState(null);
+  const [form, setForm] = useState({ diagnosis: '', icd10: '', treatment_plan: '', notes: '', exam_fee: 150000 });
+  const [prescriptions, setPrescriptions] = useState([]);
+  const [showPrint, setShowPrint] = useState(null);
+  const [msg, setMsg] = useState('');
+  const [saving, setSaving] = useState(false);
 
-const MedicalRecords = () => {
-    const [pendingPatients, setPendingPatients] = useState([]);
-    const [selectedPatient, setSelectedPatient] = useState(null);
-    const [icdSearch, setIcdSearch] = useState('');
-    const [activeTab, setActiveTab] = useState('emr'); // emr | prescription | history
-    const [medicines, setMedicines] = useState([]);
-    const [prescriptionList, setPrescriptionList] = useState([]);
-    const [savedRecordId, setSavedRecordId] = useState(null);
-    const [pastRecords, setPastRecords] = useState([]);
-    const [prescribedRecord, setPrescribedRecord] = useState(null);
-    const printRef = useRef();
+  useEffect(() => { loadAll(); }, []);
 
-    const [recordData, setRecordData] = useState({
-        Diagnosis: '', ICD10: '', TreatmentPlan: '', Notes: '', yhctServices: []
-    });
+  const loadAll = () => {
+    axios.get(`${API}/appointments/queue`, getAuth()).then(r => setQueue(r.data)).catch(() => {});
+    axios.get(`${API}/medical-records`, getAuth()).then(r => setRecords(r.data)).catch(() => {});
+    axios.get(`${API}/medicines`, getAuth()).then(r => setMedicines(r.data)).catch(() => {});
+  };
 
-    const auth = () => ({ headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } });
+  const notify = (m) => { setMsg(m); setTimeout(() => setMsg(''), 3500); };
 
-    useEffect(() => { fetchPending(); fetchMedicines(); fetchHistory(); }, []);
+  const openExam = (appt) => {
+    setSelected(appt);
+    setForm({ diagnosis: '', icd10: '', treatment_plan: '', notes: '', exam_fee: 150000 });
+    setPrescriptions([]);
+    setTab('exam');
+  };
 
-    const fetchPending = async () => {
-        try {
-            const res = await axios.get(`${API}/api/appointments/pending`, auth());
-            setPendingPatients(res.data);
-        } catch (e) { console.error(e); }
-    };
+  const handleSave = async () => {
+    if (!form.diagnosis) { notify('Vui lòng nhập chẩn đoán'); return; }
+    setSaving(true);
+    try {
+      const res = await axios.post(`${API}/medical-records`, {
+        appointment_id: selected.AppointmentID,
+        patient_id: selected.PatientID,
+        ...form
+      }, getAuth());
 
-    const fetchMedicines = async () => {
-        try {
-            const res = await axios.get(`${API}/api/medicines`, auth());
-            setMedicines(res.data);
-        } catch (e) { console.error(e); }
-    };
+      if (prescriptions.length > 0) {
+        await axios.post(`${API}/prescriptions`, { record_id: res.data.recordId, items: prescriptions }, getAuth());
+      }
 
-    const fetchHistory = async () => {
-        try {
-            const res = await axios.get(`${API}/api/medical-records`, auth());
-            setPastRecords(res.data);
-        } catch (e) { console.error(e); }
-    };
+      notify('Lưu bệnh án thành công');
+      setShowPrint({ ...selected, ...form, recordId: res.data.recordId, prescriptions });
+      loadAll();
+    } catch (e) {
+      notify(e.response?.data?.error || 'Lỗi lưu bệnh án');
+    }
+    setSaving(false);
+  };
 
-    const handleSelectICD = (icd) => {
-        setRecordData({ ...recordData, ICD10: icd.code, Diagnosis: icd.name });
-        setIcdSearch(`${icd.code} - ${icd.name}`);
-    };
+  const addPrescriptionItem = () => {
+    setPrescriptions(p => [...p, { medicine_id: '', quantity: 1, dosage: '', instructions: '' }]);
+  };
 
-    const handleToggleService = (srv) => {
-        const list = recordData.yhctServices;
-        setRecordData({
-            ...recordData,
-            yhctServices: list.includes(srv) ? list.filter(s => s !== srv) : [...list, srv]
-        });
-    };
+  const updatePrescription = (idx, key, val) => {
+    setPrescriptions(p => p.map((item, i) => i === idx ? { ...item, [key]: val } : item));
+  };
 
-    const handleSaveEMR = async (e) => {
-        e.preventDefault();
-        if (!recordData.ICD10) return alert('Bắt buộc phải có mã ICD-10 để thanh toán BHYT!');
-        if (!window.confirm('Xác nhận ký số & khóa bệnh án? Bạn chịu trách nhiệm pháp lý với Y lệnh này.')) return;
+  const removePrescription = (idx) => {
+    setPrescriptions(p => p.filter((_, i) => i !== idx));
+  };
 
-        try {
-            const planText = recordData.TreatmentPlan +
-                (recordData.yhctServices.length > 0 ? `\n[Chỉ định YHCT: ${recordData.yhctServices.join(', ')}]` : '');
+  return (
+    <div style={{ padding: 20, maxWidth: 1100, margin: '0 auto' }}>
+      <h2 style={{ color: '#c0392b', marginBottom: 4 }}>Phòng Khám Bệnh - Bệnh Án Điện Tử</h2>
+      {msg && <div style={{ background: '#d4edda', color: '#155724', padding: '8px 16px', borderRadius: 6, marginBottom: 12 }}>{msg}</div>}
 
-            const res = await axios.post(`${API}/api/medical-records`, {
-                AppointmentID: selectedPatient.AppointmentID,
-                Diagnosis: recordData.Diagnosis,
-                ICD10: recordData.ICD10,
-                TreatmentPlan: planText,
-                Notes: recordData.Notes
-            }, auth());
+      <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+        {[['queue', `Hàng đợi (${queue.length})`], ['exam', 'Phòng khám'], ['records', 'Lịch sử bệnh án']].map(([key, label]) => (
+          <button key={key} onClick={() => setTab(key)}
+            style={{ padding: '8px 18px', borderRadius: 6, border: 'none', cursor: 'pointer',
+              background: tab === key ? '#c0392b' : '#eee', color: tab === key ? '#fff' : '#333', fontWeight: tab === key ? 700 : 400 }}>
+            {label}
+          </button>
+        ))}
+      </div>
 
-            setSavedRecordId(res.data.recordId);
-            alert(`Lưu bệnh án thành công! Mã hồ sơ: ${res.data.recordId}\nBây giờ bạn có thể kê đơn thuốc.`);
-            setActiveTab('prescription');
-            fetchPending();
-            fetchHistory();
-        } catch (err) {
-            alert('Lỗi lưu hồ sơ: ' + (err.response?.data?.message || err.message));
-        }
-    };
-
-    const addPrescriptionItem = () => {
-        setPrescriptionList([...prescriptionList, { medicineId: '', medicineName: '', quantity: 1, dosage: '' }]);
-    };
-
-    const updatePrescriptionItem = (idx, field, value) => {
-        const updated = [...prescriptionList];
-        if (field === 'medicineId') {
-            const med = medicines.find(m => m.MedicineID === parseInt(value));
-            updated[idx] = { ...updated[idx], medicineId: value, medicineName: med?.MedicineName || '' };
-        } else {
-            updated[idx] = { ...updated[idx], [field]: value };
-        }
-        setPrescriptionList(updated);
-    };
-
-    const removePrescriptionItem = (idx) => {
-        setPrescriptionList(prescriptionList.filter((_, i) => i !== idx));
-    };
-
-    const handleSavePrescription = async () => {
-        if (!savedRecordId) return alert('Hãy lưu bệnh án trước khi kê đơn!');
-        if (prescriptionList.length === 0) return alert('Đơn thuốc không được rỗng!');
-        if (prescriptionList.some(p => !p.medicineId || !p.dosage)) return alert('Vui lòng điền đầy đủ thông tin thuốc!');
-
-        try {
-            await axios.post(`${API}/api/prescriptions`, {
-                recordId: savedRecordId,
-                prescriptionList: prescriptionList.map(p => ({
-                    medicineId: parseInt(p.medicineId),
-                    quantity: parseInt(p.quantity),
-                    dosage: p.dosage
-                }))
-            }, auth());
-
-            setPrescribedRecord({ patient: selectedPatient, recordId: savedRecordId, prescriptions: prescriptionList, recordData });
-            alert('Kê đơn thành công! Bệnh nhân đến quầy Thu ngân để thanh toán.');
-            resetAll();
-        } catch (err) {
-            alert('Lỗi kê đơn: ' + (err.response?.data?.message || err.message));
-        }
-    };
-
-    const resetAll = () => {
-        setSelectedPatient(null);
-        setSavedRecordId(null);
-        setPrescriptionList([]);
-        setRecordData({ Diagnosis: '', ICD10: '', TreatmentPlan: '', Notes: '', yhctServices: [] });
-        setIcdSearch('');
-        setActiveTab('emr');
-    };
-
-    const handlePrint = () => {
-        if (!prescribedRecord) return;
-        const content = printRef.current.innerHTML;
-        const win = window.open('', '_blank');
-        win.document.write(`<html><head><title>Phiếu Khám Bệnh</title>
-        <style>
-            body { font-family: Arial, sans-serif; padding: 30px; font-size: 13px; }
-            h2, h3 { text-align: center; }
-            table { width: 100%; border-collapse: collapse; margin: 10px 0; }
-            td, th { border: 1px solid #333; padding: 6px 10px; }
-            th { background: #f0f0f0; }
-            .no-print { display: none; }
-        </style>
-        </head><body>${content}</body></html>`);
-        win.document.close();
-        win.print();
-    };
-
-    const tabStyle = (t) => ({
-        padding: '10px 20px', border: 'none', cursor: 'pointer', fontWeight: 'bold', fontSize: '14px',
-        borderBottom: activeTab === t ? '3px solid #2980b9' : '3px solid transparent',
-        background: 'transparent', color: activeTab === t ? '#2980b9' : '#7f8c8d'
-    });
-
-    return (
-        <div style={{ padding: '20px', display: 'flex', gap: '20px', alignItems: 'flex-start', fontFamily: 'Arial, sans-serif' }}>
-            {/* CỘT TRÁI: WORKLIST */}
-            <div style={{ width: '300px', background: '#fff', border: '1px solid #bdc3c7', borderRadius: '6px', overflow: 'hidden' }}>
-                <div style={{ background: '#2980b9', color: '#fff', padding: '12px 15px', fontWeight: 'bold', fontSize: '14px' }}>
-                    HÀNG ĐỢI LÂM SÀNG ({pendingPatients.length})
+      {tab === 'queue' && (
+        <div>
+          <div style={{ marginBottom: 12, color: '#666', fontSize: 13 }}>Danh sách bệnh nhân đã được lễ tân duyệt - chờ khám hôm nay</div>
+          {!queue.length && <div style={{ textAlign: 'center', padding: 60, color: '#999', border: '2px dashed #ddd', borderRadius: 8 }}>Chưa có bệnh nhân trong hàng đợi</div>}
+          <div style={{ display: 'grid', gap: 12 }}>
+            {queue.map(a => (
+              <div key={a.AppointmentID} style={{ border: '1px solid #e0e0e0', borderRadius: 8, padding: 16, display: 'flex', alignItems: 'center', gap: 16, background: '#fff', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' }}>
+                <div style={{ width: 56, height: 56, borderRadius: '50%', background: '#c0392b', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22, fontWeight: 900, flexShrink: 0 }}>
+                  {a.queue_number}
                 </div>
-                {pendingPatients.length === 0 && <p style={{ padding: '15px', color: '#7f8c8d', fontSize: '13px' }}>Không có bệnh nhân chờ khám.</p>}
-                <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
-                    {pendingPatients.map(p => (
-                        <li key={p.AppointmentID}
-                            onClick={() => { setSelectedPatient(p); setSavedRecordId(null); setPrescriptionList([]); setRecordData({ Diagnosis: '', ICD10: '', TreatmentPlan: '', Notes: '', yhctServices: [] }); setIcdSearch(''); setActiveTab('emr'); }}
-                            style={{
-                                padding: '12px 15px', borderBottom: '1px solid #ecf0f1', cursor: 'pointer',
-                                background: selectedPatient?.AppointmentID === p.AppointmentID ? '#e8f4f8' : '#fff',
-                                borderLeft: selectedPatient?.AppointmentID === p.AppointmentID ? '4px solid #2980b9' : '4px solid transparent'
-                            }}>
-                            <div style={{ fontWeight: 'bold', fontSize: '14px' }}>{p.PatientName}</div>
-                            <div style={{ fontSize: '12px', color: '#7f8c8d', marginTop: '3px' }}>Lý do: {p.Reason}</div>
-                            <div style={{ fontSize: '12px', color: '#aaa' }}>{new Date(p.AppointmentDate).toLocaleDateString('vi-VN')}</div>
-                        </li>
-                    ))}
-                </ul>
-
-                {/* Lịch sử bệnh án gần đây */}
-                <div style={{ background: '#2c3e50', color: '#fff', padding: '10px 15px', fontWeight: 'bold', fontSize: '13px', marginTop: '10px' }}>
-                    BỆNH ÁN GẦN ĐÂY
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontWeight: 700, fontSize: 15 }}>{a.patient_name}</div>
+                  <div style={{ fontSize: 13, color: '#666' }}>Phiếu: {a.exam_ticket} | Khoa: {a.Department}</div>
+                  <div style={{ fontSize: 13, color: '#666' }}>BHYT: {a.insurance_type} {a.transfer_ticket ? '| Chuyển tuyến ✓' : ''}</div>
+                  {a.status_flow === 'called' && <span style={{ fontSize: 12, background: '#f39c12', color: '#fff', padding: '2px 8px', borderRadius: 10 }}>Đang gọi</span>}
                 </div>
-                <ul style={{ listStyle: 'none', padding: 0, margin: 0, maxHeight: '200px', overflowY: 'auto' }}>
-                    {pastRecords.slice(0, 8).map(r => (
-                        <li key={r.RecordID} style={{ padding: '10px 15px', borderBottom: '1px solid #ecf0f1', fontSize: '12px' }}>
-                            <div style={{ fontWeight: 'bold' }}>{r.PatientName}</div>
-                            <div style={{ color: '#7f8c8d' }}>{r.Diagnosis}</div>
-                            <div style={{ color: '#aaa' }}>{r.ICD10} | {new Date(r.CreatedAt).toLocaleDateString('vi-VN')}</div>
-                        </li>
-                    ))}
-                </ul>
-            </div>
-
-            {/* CỘT PHẢI: EMR + KÊ ĐƠN */}
-            <div style={{ flex: 1, background: '#fff', border: '1px solid #bdc3c7', borderRadius: '6px', overflow: 'hidden' }}>
-                {/* TABS */}
-                <div style={{ display: 'flex', borderBottom: '1px solid #e0e0e0', background: '#f9f9f9' }}>
-                    <button style={tabStyle('emr')} onClick={() => setActiveTab('emr')}>Bệnh Án (EMR)</button>
-                    <button style={tabStyle('prescription')} onClick={() => setActiveTab('prescription')}>
-                        Kê Đơn Thuốc {savedRecordId ? `(Hồ sơ #${savedRecordId})` : ''}
-                    </button>
-                    <button style={tabStyle('history')} onClick={() => setActiveTab('history')}>Lịch Sử Bệnh Án</button>
-                    {prescribedRecord && (
-                        <button onClick={handlePrint} style={{ marginLeft: 'auto', padding: '8px 16px', background: '#27ae60', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 'bold', fontSize: '13px' }}>
-                            In Phiếu Khám
-                        </button>
-                    )}
-                </div>
-
-                <div style={{ padding: '20px' }}>
-                    {/* TAB: BỆNH ÁN */}
-                    {activeTab === 'emr' && (
-                        !selectedPatient ? (
-                            <div style={{ textAlign: 'center', padding: '60px 0', color: '#7f8c8d' }}>
-                                Chọn bệnh nhân từ hàng đợi lâm sàng để bắt đầu khám.
-                            </div>
-                        ) : (
-                            <form onSubmit={handleSaveEMR}>
-                                <div style={{ background: '#fef9e7', border: '1px solid #f39c12', borderRadius: '6px', padding: '12px 16px', marginBottom: '20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                    <div>
-                                        <span style={{ fontWeight: 'bold', fontSize: '16px', color: '#e67e22' }}>Đang khám: </span>
-                                        <span style={{ fontWeight: 'bold', fontSize: '16px', color: '#c0392b', textTransform: 'uppercase' }}>{selectedPatient.PatientName}</span>
-                                    </div>
-                                    <div style={{ fontSize: '13px', color: '#7f8c8d' }}>
-                                        Lịch hẹn #{selectedPatient.AppointmentID} | {new Date(selectedPatient.AppointmentDate).toLocaleDateString('vi-VN')}
-                                    </div>
-                                </div>
-
-                                {/* MÃ ICD-10 */}
-                                <div style={{ marginBottom: '16px', position: 'relative' }}>
-                                    <label style={{ fontWeight: 'bold', display: 'block', marginBottom: '6px' }}>Mã ICD-10 / Chẩn đoán <span style={{ color: 'red' }}>*</span></label>
-                                    <input type="text"
-                                        placeholder="Tìm bệnh hoặc gõ mã ICD (vd: M54, đau lưng...)"
-                                        value={icdSearch}
-                                        onChange={e => { setIcdSearch(e.target.value); if (!e.target.value) setRecordData({ ...recordData, ICD10: '', Diagnosis: '' }); }}
-                                        style={{ width: '100%', padding: '10px', border: '1px solid #bdc3c7', borderRadius: '4px', fontSize: '14px', boxSizing: 'border-box' }}
-                                    />
-                                    {icdSearch && !recordData.ICD10 && (
-                                        <ul style={{ position: 'absolute', width: '100%', background: '#fff', border: '1px solid #bdc3c7', maxHeight: '180px', overflowY: 'auto', listStyle: 'none', padding: 0, margin: 0, zIndex: 100, boxShadow: '0 4px 10px rgba(0,0,0,0.1)', borderRadius: '0 0 4px 4px' }}>
-                                            {icd10Dictionary.filter(i => i.name.toLowerCase().includes(icdSearch.toLowerCase()) || i.code.toUpperCase().includes(icdSearch.toUpperCase())).map(icd => (
-                                                <li key={icd.code} onClick={() => handleSelectICD(icd)}
-                                                    style={{ padding: '10px 12px', borderBottom: '1px solid #f0f0f0', cursor: 'pointer', fontSize: '13px' }}
-                                                    onMouseOver={e => e.currentTarget.style.background = '#e8f4f8'}
-                                                    onMouseOut={e => e.currentTarget.style.background = '#fff'}>
-                                                    <strong style={{ color: '#2980b9' }}>{icd.code}</strong> — {icd.name}
-                                                </li>
-                                            ))}
-                                        </ul>
-                                    )}
-                                    {recordData.ICD10 && (
-                                        <div style={{ marginTop: '6px', background: '#e8f8f5', border: '1px solid #27ae60', borderRadius: '4px', padding: '8px 12px', fontSize: '13px', color: '#27ae60', fontWeight: 'bold' }}>
-                                            Đã chọn: {recordData.ICD10} — {recordData.Diagnosis}
-                                        </div>
-                                    )}
-                                </div>
-
-                                {/* YHCT SERVICES */}
-                                <div style={{ marginBottom: '16px' }}>
-                                    <label style={{ fontWeight: 'bold', display: 'block', marginBottom: '8px' }}>Chỉ Định Kỹ Thuật YHCT</label>
-                                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px', background: '#f8f9fa', padding: '12px', borderRadius: '4px', border: '1px solid #ecf0f1' }}>
-                                        {availableServices.map(srv => (
-                                            <label key={srv} style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '13px' }}>
-                                                <input type="checkbox" checked={recordData.yhctServices.includes(srv)} onChange={() => handleToggleService(srv)} />
-                                                {srv}
-                                            </label>
-                                        ))}
-                                    </div>
-                                </div>
-
-                                {/* KẾ HOẠCH ĐIỀU TRỊ */}
-                                <div style={{ marginBottom: '16px' }}>
-                                    <label style={{ fontWeight: 'bold', display: 'block', marginBottom: '6px' }}>Kế Hoạch Điều Trị / Lời Dặn <span style={{ color: 'red' }}>*</span></label>
-                                    <textarea required value={recordData.TreatmentPlan} onChange={e => setRecordData({ ...recordData, TreatmentPlan: e.target.value })}
-                                        placeholder="Ghi kế hoạch điều trị, lời dặn bệnh nhân..."
-                                        style={{ width: '100%', height: '90px', padding: '10px', border: '1px solid #bdc3c7', borderRadius: '4px', fontSize: '14px', resize: 'vertical', boxSizing: 'border-box' }} />
-                                </div>
-
-                                {/* GHI CHÚ */}
-                                <div style={{ marginBottom: '20px' }}>
-                                    <label style={{ fontWeight: 'bold', display: 'block', marginBottom: '6px' }}>Ghi Chú Lâm Sàng</label>
-                                    <textarea value={recordData.Notes} onChange={e => setRecordData({ ...recordData, Notes: e.target.value })}
-                                        placeholder="Triệu chứng, bệnh sử, ghi chú thêm..."
-                                        style={{ width: '100%', height: '70px', padding: '10px', border: '1px solid #bdc3c7', borderRadius: '4px', fontSize: '14px', resize: 'vertical', boxSizing: 'border-box' }} />
-                                </div>
-
-                                <div style={{ display: 'flex', gap: '12px' }}>
-                                    <button type="submit" style={{ flex: 2, background: '#c0392b', color: '#fff', padding: '13px', border: 'none', borderRadius: '4px', fontWeight: 'bold', cursor: 'pointer', fontSize: '14px' }}>
-                                        KÝ SỐ & LƯU BỆNH ÁN
-                                    </button>
-                                    <button type="button" onClick={() => setActiveTab('prescription')} style={{ flex: 1, background: '#2980b9', color: '#fff', padding: '13px', border: 'none', borderRadius: '4px', fontWeight: 'bold', cursor: 'pointer', fontSize: '14px' }}>
-                                        CHUYỂN KÊ ĐƠN
-                                    </button>
-                                </div>
-                            </form>
-                        )
-                    )}
-
-                    {/* TAB: KÊ ĐƠN THUỐC */}
-                    {activeTab === 'prescription' && (
-                        <div>
-                            {!savedRecordId ? (
-                                <div style={{ textAlign: 'center', padding: '60px', color: '#e67e22' }}>
-                                    Hãy lưu bệnh án (tab EMR) trước khi kê đơn thuốc!
-                                </div>
-                            ) : (
-                                <>
-                                    <div style={{ background: '#e8f8f5', border: '1px solid #27ae60', borderRadius: '6px', padding: '12px 16px', marginBottom: '20px' }}>
-                                        <strong style={{ color: '#27ae60' }}>Kê đơn cho hồ sơ #{savedRecordId}</strong> — {selectedPatient?.PatientName}
-                                    </div>
-
-                                    <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '16px' }}>
-                                        <thead>
-                                            <tr style={{ background: '#f8f9fa' }}>
-                                                <th style={{ padding: '10px', textAlign: 'left', border: '1px solid #ddd', width: '35%' }}>Tên Thuốc</th>
-                                                <th style={{ padding: '10px', textAlign: 'center', border: '1px solid #ddd', width: '12%' }}>Số Lượng</th>
-                                                <th style={{ padding: '10px', textAlign: 'left', border: '1px solid #ddd' }}>Liều Dùng / Cách Dùng</th>
-                                                <th style={{ padding: '10px', textAlign: 'center', border: '1px solid #ddd', width: '8%' }}>Xóa</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            {prescriptionList.map((item, idx) => (
-                                                <tr key={idx}>
-                                                    <td style={{ padding: '8px', border: '1px solid #ddd' }}>
-                                                        <select value={item.medicineId} onChange={e => updatePrescriptionItem(idx, 'medicineId', e.target.value)}
-                                                            style={{ width: '100%', padding: '6px', border: '1px solid #bdc3c7', borderRadius: '3px', fontSize: '13px' }}>
-                                                            <option value="">-- Chọn thuốc --</option>
-                                                            {medicines.map(m => (
-                                                                <option key={m.MedicineID} value={m.MedicineID}>
-                                                                    {m.MedicineName} (còn {m.StockQuantity} {m.Unit})
-                                                                </option>
-                                                            ))}
-                                                        </select>
-                                                    </td>
-                                                    <td style={{ padding: '8px', border: '1px solid #ddd' }}>
-                                                        <input type="number" min="1" value={item.quantity} onChange={e => updatePrescriptionItem(idx, 'quantity', e.target.value)}
-                                                            style={{ width: '100%', padding: '6px', border: '1px solid #bdc3c7', borderRadius: '3px', textAlign: 'center', fontSize: '13px' }} />
-                                                    </td>
-                                                    <td style={{ padding: '8px', border: '1px solid #ddd' }}>
-                                                        <input type="text" value={item.dosage} onChange={e => updatePrescriptionItem(idx, 'dosage', e.target.value)}
-                                                            placeholder="vd: Ngày 2 lần, sáng tối sau ăn"
-                                                            style={{ width: '100%', padding: '6px', border: '1px solid #bdc3c7', borderRadius: '3px', fontSize: '13px', boxSizing: 'border-box' }} />
-                                                    </td>
-                                                    <td style={{ padding: '8px', border: '1px solid #ddd', textAlign: 'center' }}>
-                                                        <button onClick={() => removePrescriptionItem(idx)}
-                                                            style={{ background: '#e74c3c', color: '#fff', border: 'none', padding: '5px 10px', borderRadius: '3px', cursor: 'pointer', fontWeight: 'bold' }}>X</button>
-                                                    </td>
-                                                </tr>
-                                            ))}
-                                        </tbody>
-                                    </table>
-
-                                    <div style={{ display: 'flex', gap: '12px' }}>
-                                        <button onClick={addPrescriptionItem}
-                                            style={{ padding: '10px 20px', background: '#3498db', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>
-                                            + Thêm Thuốc
-                                        </button>
-                                        <button onClick={handleSavePrescription}
-                                            style={{ padding: '10px 24px', background: '#27ae60', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '14px' }}>
-                                            XÁC NHẬN KÊ ĐƠN
-                                        </button>
-                                        <button onClick={() => setPrescriptionList([])}
-                                            style={{ padding: '10px 16px', background: '#e2e8f0', color: '#475569', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>
-                                            Làm Lại
-                                        </button>
-                                    </div>
-                                </>
-                            )}
-                        </div>
-                    )}
-
-                    {/* TAB: LỊCH SỬ */}
-                    {activeTab === 'history' && (
-                        <div>
-                            <h3 style={{ color: '#2c3e50', marginTop: 0 }}>Lịch Sử Bệnh Án</h3>
-                            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                                <thead>
-                                    <tr style={{ background: '#2980b9', color: '#fff' }}>
-                                        <th style={{ padding: '10px', textAlign: 'left' }}>Bệnh Nhân</th>
-                                        <th style={{ padding: '10px', textAlign: 'left' }}>Chẩn Đoán</th>
-                                        <th style={{ padding: '10px' }}>ICD-10</th>
-                                        <th style={{ padding: '10px' }}>Ngày Khám</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {pastRecords.map((r, i) => (
-                                        <tr key={r.RecordID} style={{ background: i % 2 === 0 ? '#fff' : '#f8f9fa', borderBottom: '1px solid #eee' }}>
-                                            <td style={{ padding: '10px', fontWeight: 'bold' }}>{r.PatientName}</td>
-                                            <td style={{ padding: '10px' }}>{r.Diagnosis}</td>
-                                            <td style={{ padding: '10px', textAlign: 'center' }}>
-                                                <span style={{ background: '#e8f4f8', color: '#2980b9', padding: '3px 8px', borderRadius: '12px', fontSize: '12px', fontWeight: 'bold' }}>{r.ICD10}</span>
-                                            </td>
-                                            <td style={{ padding: '10px', textAlign: 'center', color: '#7f8c8d' }}>
-                                                {new Date(r.AppointmentDate || r.CreatedAt).toLocaleDateString('vi-VN')}
-                                            </td>
-                                        </tr>
-                                    ))}
-                                </tbody>
-                            </table>
-                        </div>
-                    )}
-                </div>
-            </div>
-
-            {/* PHIẾU IN ẨN */}
-            <div ref={printRef} style={{ display: 'none' }}>
-                {prescribedRecord && (
-                    <div>
-                        <h2>BỆNH VIỆN Y DƯỢC CỔ TRUYỀN KIÊN GIANG</h2>
-                        <h3>PHIẾU KHÁM BỆNH & ĐƠN THUỐC</h3>
-                        <hr />
-                        <p><strong>Bệnh nhân:</strong> {prescribedRecord.patient?.PatientName}</p>
-                        <p><strong>Ngày khám:</strong> {new Date().toLocaleDateString('vi-VN')}</p>
-                        <p><strong>Chẩn đoán:</strong> {prescribedRecord.recordData?.Diagnosis}</p>
-                        <p><strong>Mã ICD-10:</strong> {prescribedRecord.recordData?.ICD10}</p>
-                        <p><strong>Chỉ định YHCT:</strong> {prescribedRecord.recordData?.yhctServices?.join(', ') || 'Không có'}</p>
-                        <p><strong>Kế hoạch điều trị:</strong> {prescribedRecord.recordData?.TreatmentPlan}</p>
-                        <hr />
-                        <h4>ĐƠN THUỐC ĐÔNG Y</h4>
-                        <table>
-                            <thead>
-                                <tr><th>STT</th><th>Tên Thuốc</th><th>Số Lượng</th><th>Liều Dùng</th></tr>
-                            </thead>
-                            <tbody>
-                                {prescribedRecord.prescriptions?.map((p, i) => (
-                                    <tr key={i}>
-                                        <td>{i + 1}</td>
-                                        <td>{p.medicineName}</td>
-                                        <td style={{ textAlign: 'center' }}>{p.quantity}</td>
-                                        <td>{p.dosage}</td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
-                        <br />
-                        <p><em>Bệnh nhân mang phiếu này đến quầy Thu ngân để thanh toán và nhận thuốc tại quầy Dược.</em></p>
-                        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '30px' }}>
-                            <div style={{ textAlign: 'center' }}>
-                                <p><strong>Bác sĩ điều trị</strong></p>
-                                <p style={{ marginTop: '50px' }}>(Ký và ghi rõ họ tên)</p>
-                            </div>
-                        </div>
-                    </div>
-                )}
-            </div>
+                <button onClick={() => openExam(a)} style={{ padding: '10px 22px', background: '#c0392b', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 700, whiteSpace: 'nowrap' }}>
+                  Khám bệnh
+                </button>
+              </div>
+            ))}
+          </div>
         </div>
-    );
-};
+      )}
 
-export default MedicalRecords;
+      {tab === 'exam' && (
+        <div>
+          {!selected ? (
+            <div style={{ textAlign: 'center', padding: 60, color: '#999' }}>
+              Chọn bệnh nhân từ tab <strong>Hàng đợi</strong> để bắt đầu khám
+            </div>
+          ) : (
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.2fr', gap: 20 }}>
+              {/* Thông tin bệnh nhân */}
+              <div>
+                <div style={{ background: '#f8f9fa', border: '1px solid #dee2e6', borderRadius: 8, padding: 16, marginBottom: 16 }}>
+                  <div style={{ fontWeight: 700, fontSize: 15, color: '#c0392b', marginBottom: 12 }}>Thông tin bệnh nhân</div>
+                  {[['Họ tên', selected.patient_name], ['Phiếu khám', selected.exam_ticket], ['STT', selected.queue_number], ['Khoa', selected.Department], ['BHYT', selected.insurance_type], ['Chuyển tuyến', selected.transfer_ticket ? 'Có' : 'Không'], ['Điện thoại', selected.Phone]].map(([k, v]) => (
+                    <div key={k} style={{ display: 'flex', marginBottom: 6, fontSize: 13 }}>
+                      <span style={{ color: '#666', width: 90 }}>{k}:</span>
+                      <span style={{ fontWeight: 600 }}>{v || '-'}</span>
+                    </div>
+                  ))}
+                  {selected.insurance_type === 'K3' && selected.transfer_ticket && (
+                    <div style={{ marginTop: 10, background: '#d4edda', padding: '6px 12px', borderRadius: 6, color: '#155724', fontWeight: 700, fontSize: 13 }}>
+                      BHYT K3 + Chuyển tuyến → Miễn phí 100%
+                    </div>
+                  )}
+                </div>
+
+                {/* Đơn thuốc */}
+                <div style={{ background: '#fff', border: '1px solid #dee2e6', borderRadius: 8, padding: 16 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                    <div style={{ fontWeight: 700, color: '#c0392b' }}>Đơn thuốc đông y</div>
+                    <button onClick={addPrescriptionItem} style={{ padding: '4px 12px', background: '#27ae60', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 13 }}>+ Thêm thuốc</button>
+                  </div>
+                  {prescriptions.map((item, idx) => (
+                    <div key={idx} style={{ border: '1px solid #eee', borderRadius: 6, padding: 10, marginBottom: 8 }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 60px', gap: 8, marginBottom: 6 }}>
+                        <select value={item.medicine_id} onChange={e => updatePrescription(idx, 'medicine_id', e.target.value)}
+                          style={{ padding: '6px', border: '1px solid #ddd', borderRadius: 4, width: '100%' }}>
+                          <option value="">-- Chọn thuốc --</option>
+                          {medicines.map(m => <option key={m.MedicineID} value={m.MedicineID}>{m.Name} ({m.Unit}) - Tồn: {m.StockQuantity}</option>)}
+                        </select>
+                        <input type="number" min="1" value={item.quantity} onChange={e => updatePrescription(idx, 'quantity', e.target.value)}
+                          style={{ padding: '6px', border: '1px solid #ddd', borderRadius: 4 }} placeholder="SL" />
+                      </div>
+                      <input value={item.dosage} onChange={e => updatePrescription(idx, 'dosage', e.target.value)}
+                        style={{ width: '100%', padding: '6px', border: '1px solid #ddd', borderRadius: 4, marginBottom: 6, boxSizing: 'border-box' }} placeholder="Liều dùng (vd: 2 lần/ngày)" />
+                      <div style={{ display: 'flex', gap: 8 }}>
+                        <input value={item.instructions} onChange={e => updatePrescription(idx, 'instructions', e.target.value)}
+                          style={{ flex: 1, padding: '6px', border: '1px solid #ddd', borderRadius: 4 }} placeholder="Cách dùng (vd: Uống sau ăn)" />
+                        <button onClick={() => removePrescription(idx)} style={{ padding: '4px 8px', background: '#e74c3c', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer' }}>×</button>
+                      </div>
+                    </div>
+                  ))}
+                  {!prescriptions.length && <div style={{ color: '#999', fontSize: 13, textAlign: 'center', padding: '12px 0' }}>Chưa có thuốc trong đơn</div>}
+                </div>
+              </div>
+
+              {/* Form khám */}
+              <div>
+                <div style={{ background: '#fff', border: '1px solid #dee2e6', borderRadius: 8, padding: 16 }}>
+                  <div style={{ fontWeight: 700, fontSize: 15, color: '#c0392b', marginBottom: 16 }}>Bệnh Án Điện Tử (EMR)</div>
+
+                  <div style={{ marginBottom: 14 }}>
+                    <label style={{ fontWeight: 600, display: 'block', marginBottom: 4 }}>Chẩn đoán bệnh *</label>
+                    <textarea value={form.diagnosis} onChange={e => setForm(f => ({ ...f, diagnosis: e.target.value }))} rows={2}
+                      style={{ width: '100%', padding: '8px 10px', border: '1px solid #ddd', borderRadius: 6, boxSizing: 'border-box' }}
+                      placeholder="Nhập chẩn đoán lâm sàng..." />
+                  </div>
+
+                  <div style={{ marginBottom: 14 }}>
+                    <label style={{ fontWeight: 600, display: 'block', marginBottom: 4 }}>Mã ICD-10</label>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <input value={form.icd10} onChange={e => setForm(f => ({ ...f, icd10: e.target.value }))}
+                        style={{ flex: 1, padding: '8px 10px', border: '1px solid #ddd', borderRadius: 6 }} placeholder="Nhập hoặc chọn mã ICD-10" />
+                      <select onChange={e => { if (e.target.value) setForm(f => ({ ...f, icd10: e.target.value })); }}
+                        style={{ padding: '8px', border: '1px solid #ddd', borderRadius: 6 }}>
+                        <option value="">Chọn nhanh</option>
+                        {ICD10_COMMON.map(i => <option key={i.code} value={i.code}>{i.code} - {i.name}</option>)}
+                      </select>
+                    </div>
+                  </div>
+
+                  <div style={{ marginBottom: 14 }}>
+                    <label style={{ fontWeight: 600, display: 'block', marginBottom: 4 }}>Chỉ định liệu trình YHCT</label>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
+                      {TECHNIQUE_OPTIONS.map(t => (
+                        <button key={t} onClick={() => setForm(f => ({ ...f, treatment_plan: f.treatment_plan ? f.treatment_plan + ', ' + t : t }))}
+                          style={{ padding: '4px 10px', background: '#f0f0f0', border: '1px solid #ddd', borderRadius: 16, cursor: 'pointer', fontSize: 12 }}>
+                          {t}
+                        </button>
+                      ))}
+                    </div>
+                    <textarea value={form.treatment_plan} onChange={e => setForm(f => ({ ...f, treatment_plan: e.target.value }))} rows={3}
+                      style={{ width: '100%', padding: '8px 10px', border: '1px solid #ddd', borderRadius: 6, boxSizing: 'border-box' }}
+                      placeholder="Chỉ định liệu trình điều trị..." />
+                  </div>
+
+                  <div style={{ marginBottom: 14 }}>
+                    <label style={{ fontWeight: 600, display: 'block', marginBottom: 4 }}>Ghi chú lâm sàng</label>
+                    <textarea value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} rows={2}
+                      style={{ width: '100%', padding: '8px 10px', border: '1px solid #ddd', borderRadius: 6, boxSizing: 'border-box' }}
+                      placeholder="Bệnh sử, triệu chứng, kết quả thăm khám..." />
+                  </div>
+
+                  <div style={{ marginBottom: 20 }}>
+                    <label style={{ fontWeight: 600, display: 'block', marginBottom: 4 }}>Phí khám (VNĐ)</label>
+                    <input type="number" value={form.exam_fee} onChange={e => setForm(f => ({ ...f, exam_fee: e.target.value }))}
+                      style={{ width: '100%', padding: '8px 10px', border: '1px solid #ddd', borderRadius: 6, boxSizing: 'border-box' }} />
+                  </div>
+
+                  <div style={{ display: 'flex', gap: 10 }}>
+                    <button onClick={() => setSelected(null)} style={{ flex: 1, padding: '10px', background: '#95a5a6', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 600 }}>
+                      Trở lại
+                    </button>
+                    <button onClick={handleSave} disabled={saving} style={{ flex: 2, padding: '10px', background: '#c0392b', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 700 }}>
+                      {saving ? 'Đang lưu...' : 'Lưu bệnh án & Xuất phiếu'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {tab === 'records' && (
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+            <thead>
+              <tr style={{ background: '#c0392b', color: '#fff' }}>
+                {['#', 'Bệnh nhân', 'Chẩn đoán', 'ICD-10', 'Liệu trình', 'Mộc BHYT', 'Ngày khám'].map(h => (
+                  <th key={h} style={{ padding: '10px 8px', textAlign: 'left' }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {records.map((r, i) => (
+                <tr key={r.RecordID} style={{ borderBottom: '1px solid #eee', background: i % 2 === 0 ? '#fff' : '#fafafa' }}>
+                  <td style={{ padding: '8px' }}>{r.RecordID}</td>
+                  <td style={{ padding: '8px', fontWeight: 600 }}>{r.patient_name}</td>
+                  <td style={{ padding: '8px' }}>{r.Diagnosis}</td>
+                  <td style={{ padding: '8px' }}>{r.ICD10 || '-'}</td>
+                  <td style={{ padding: '8px', maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.TreatmentPlan || '-'}</td>
+                  <td style={{ padding: '8px' }}>
+                    {r.bhyt_stamp ? <span style={{ background: '#d4edda', color: '#155724', padding: '2px 8px', borderRadius: 10, fontSize: 11, fontWeight: 600 }}>{r.bhyt_stamp}</span> : '-'}
+                  </td>
+                  <td style={{ padding: '8px', whiteSpace: 'nowrap' }}>{r.CreatedAt ? new Date(r.CreatedAt).toLocaleDateString('vi-VN') : '-'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {!records.length && <div style={{ textAlign: 'center', padding: 40, color: '#999' }}>Chưa có bệnh án nào</div>}
+        </div>
+      )}
+
+      {/* In phiếu khám */}
+      {showPrint && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{ background: '#fff', padding: 32, borderRadius: 8, minWidth: 420, maxWidth: 520, maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 8px 40px rgba(0,0,0,0.25)' }}>
+            <div style={{ textAlign: 'center', borderBottom: '2px solid #c0392b', paddingBottom: 12, marginBottom: 16 }}>
+              <div style={{ fontWeight: 700, fontSize: 14 }}>BỆNH VIỆN Y DƯỢC CỔ TRUYỀN KIÊN GIANG</div>
+              <div style={{ color: '#666', fontSize: 12 }}>Số 64 Đống Đa, Phường Rạch Giá, An Giang</div>
+            </div>
+            <div style={{ textAlign: 'center', marginBottom: 16 }}>
+              <div style={{ fontWeight: 700, fontSize: 18, color: '#c0392b' }}>PHIẾU KHÁM BỆNH</div>
+              <div style={{ fontSize: 13, color: '#888' }}>Ngày: {new Date().toLocaleDateString('vi-VN')}</div>
+            </div>
+            <table style={{ width: '100%', fontSize: 13, marginBottom: 16 }}>
+              <tbody>
+                {[['Bệnh nhân', showPrint.patient_name], ['Phiếu khám', showPrint.exam_ticket], ['STT', showPrint.queue_number], ['Khoa', showPrint.Department], ['BHYT', showPrint.insurance_type], ['Chuyển tuyến', showPrint.transfer_ticket ? 'Có' : 'Không'], ['Chẩn đoán', showPrint.diagnosis], ['ICD-10', showPrint.icd10 || '-'], ['Liệu trình', showPrint.treatment_plan || '-']].map(([k, v]) => (
+                  <tr key={k}>
+                    <td style={{ padding: '4px 0', color: '#666', width: 110, verticalAlign: 'top' }}>{k}:</td>
+                    <td style={{ padding: '4px 0', fontWeight: 600 }}>{v}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {showPrint.prescriptions?.length > 0 && (
+              <div>
+                <div style={{ fontWeight: 700, marginBottom: 8, color: '#c0392b' }}>Đơn thuốc đông y:</div>
+                {showPrint.prescriptions.map((p, i) => (
+                  <div key={i} style={{ fontSize: 13, marginBottom: 4, paddingLeft: 12 }}>• Thuốc #{p.medicine_id} × {p.quantity} - {p.dosage}</div>
+                ))}
+              </div>
+            )}
+            {showPrint.insurance_type === 'K3' && showPrint.transfer_ticket && (
+              <div style={{ margin: '16px 0', background: '#d4edda', padding: '8px 12px', borderRadius: 6, color: '#155724', fontWeight: 700, textAlign: 'center', border: '2px solid #28a745' }}>
+                BHYT K3 - MIỄN PHÍ 100%
+              </div>
+            )}
+            <div style={{ textAlign: 'center', fontSize: 12, color: '#888', margin: '12px 0' }}>
+              Bệnh nhân mang phiếu này đến Y tá để đóng mộc BHYT, sau đó đến Thu ngân thanh toán
+            </div>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'center' }}>
+              <button onClick={() => window.print()} style={{ padding: '8px 20px', background: '#c0392b', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 700 }}>In phiếu</button>
+              <button onClick={() => setShowPrint(null)} style={{ padding: '8px 20px', background: '#95a5a6', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer' }}>Đóng</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
