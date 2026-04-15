@@ -1,316 +1,289 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
-import './App.css';
 
-const API = 'http://localhost:3001/api';
-const getAuth = () => ({ headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } });
+const API = 'http://localhost:3001';
+const auth = () => ({ headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } });
 
-const INSURANCE_LABELS = { 'K1': 'BHYT K1 (70%)', 'K2': 'BHYT K2 (80%)', 'K3': 'BHYT K3 (95-100%)', 'Không có': 'Tự chi trả' };
+const Reception = () => {
+    const [activeTab, setActiveTab] = useState('register');
+    const [formData, setFormData] = useState({
+        patientName: '', dob: '', phone: '', healthInsuranceID: '',
+        department: 'Khoa Cơ xương khớp', reason: '', isTransfer: false
+    });
+    const [ticket, setTicket] = useState(null);
+    const [queue, setQueue] = useState([]);
+    const [calledNumber, setCalledNumber] = useState(null);
 
-export default function Reception() {
-  const [tab, setTab] = useState('pending');
-  const [appointments, setAppointments] = useState([]);
-  const [patients, setPatients] = useState([]);
-  const [showAddPatient, setShowAddPatient] = useState(false);
-  const [showAddAppt, setShowAddAppt] = useState(false);
-  const [showTicket, setShowTicket] = useState(null);
-  const [calledQueue, setCalledQueue] = useState([]);
-  const [msg, setMsg] = useState('');
-  const [newPatient, setNewPatient] = useState({ full_name: '', cccd: '', date_of_birth: '', phone: '', address: '', health_insurance_id: '' });
-  const [newAppt, setNewAppt] = useState({ patient_id: '', patient_name: '', department: 'Châm cứu', insurance_type: 'Không có', transfer_ticket: false, appointment_date: '', reason: '' });
-  const printRef = useRef();
+    const departments = [
+        "Khoa Cơ xương khớp", "Khoa Thần kinh", "Khoa Phục hồi chức năng",
+        "Khoa Nội YHCT", "Khoa Khám bệnh", "Khoa Cấp cứu"
+    ];
 
-  useEffect(() => { loadData(); }, []);
+    const fetchQueue = useCallback(async () => {
+        try {
+            const res = await axios.get(`${API}/api/queue/today`, auth());
+            setQueue(res.data || []);
+        } catch (err) {
+            console.error("Lỗi tải hàng đợi:", err);
+        }
+    }, []);
 
-  const loadData = () => {
-    axios.get(`${API}/appointments`, getAuth()).then(r => setAppointments(r.data)).catch(() => {});
-    axios.get(`${API}/patients`, getAuth()).then(r => setPatients(r.data)).catch(() => {});
-  };
+    useEffect(() => {
+        fetchQueue();
+        const interval = setInterval(fetchQueue, 10000); // refresh mỗi 10s
+        return () => clearInterval(interval);
+    }, [fetchQueue]);
 
-  const notify = (m) => { setMsg(m); setTimeout(() => setMsg(''), 3000); };
+    const handleSubmit = async (e) => {
+        e.preventDefault();
+        try {
+            const res = await axios.post(`${API}/api/reception/walk-in`, formData, auth());
+            setTicket(res.data.ticket);
+            setFormData({ patientName: '', dob: '', phone: '', healthInsuranceID: '', department: 'Khoa Cơ xương khớp', reason: '', isTransfer: false });
+            fetchQueue();
+        } catch (err) {
+            alert("Lỗi cấp số: " + (err.response?.data?.message || err.message));
+        }
+    };
 
-  const pending = appointments.filter(a => !a.is_approved && a.Status !== 'Đã hủy');
-  const approved = appointments.filter(a => a.is_approved && a.status_flow !== 'paid');
-  const called = appointments.filter(a => a.status_flow === 'called');
+    const handleApprove = async (appointmentId) => {
+        try {
+            await axios.put(`${API}/api/queue/${appointmentId}/approve`, {}, auth());
+            fetchQueue();
+        } catch (err) {
+            alert("Lỗi duyệt: " + (err.response?.data?.message || err.message));
+        }
+    };
 
-  const handleApprove = async (id) => {
-    await axios.put(`${API}/appointments/${id}/approve`, {}, getAuth());
-    notify('Đã duyệt lịch hẹn');
-    loadData();
-  };
+    const handleCall = async (appointmentId, queueNumber) => {
+        try {
+            await axios.put(`${API}/api/queue/${appointmentId}/call`, {}, auth());
+            setCalledNumber(queueNumber);
+            fetchQueue();
+            // Thông báo gọi số
+            if (window.speechSynthesis) {
+                const msg = new SpeechSynthesisUtterance(`Mời bệnh nhân số ${queueNumber} vào phòng khám`);
+                msg.lang = 'vi-VN';
+                window.speechSynthesis.speak(msg);
+            }
+        } catch (err) {
+            alert("Lỗi gọi số: " + (err.response?.data?.message || err.message));
+        }
+    };
 
-  const handleCall = async (appt) => {
-    await axios.put(`${API}/appointments/${appt.AppointmentID}/call`, {}, getAuth());
-    setCalledQueue(prev => [...prev.filter(c => c.AppointmentID !== appt.AppointmentID), appt]);
-    notify(`Đang gọi số ${appt.queue_number} - ${appt.patient_name}`);
-    loadData();
-  };
+    const getStatusLabel = (status) => {
+        const map = {
+            'Pending': { label: 'Chờ duyệt', color: '#f39c12' },
+            'WalkIn': { label: 'Vãng lai - Chờ duyệt', color: '#e67e22' },
+            'Approved': { label: 'Đã duyệt', color: '#27ae60' },
+            'Called': { label: 'Đã gọi vào', color: '#2980b9' },
+            'Examined': { label: 'Đã khám', color: '#8e44ad' },
+            'Confirmed': { label: 'Xác nhận', color: '#16a085' },
+        };
+        return map[status] || { label: status, color: '#95a5a6' };
+    };
 
-  const handleCancel = async (id) => {
-    await axios.put(`${API}/appointments/${id}/status`, { status: 'Đã hủy', status_flow: 'cancelled' }, getAuth());
-    notify('Đã hủy lịch hẹn');
-    loadData();
-  };
+    const printTicket = () => {
+        const printContents = document.getElementById('print-ticket').innerHTML;
+        const w = window.open('', '_blank');
+        w.document.write(`<html><head><title>Phiếu số</title>
+        <style>body{font-family:Arial;text-align:center;margin:20px;}h1{font-size:40px;color:#e74c3c;margin:15px 0;}
+        .info{font-size:16px;margin:8px 0;}</style></head>
+        <body>${printContents}</body></html>`);
+        w.document.close();
+        w.print();
+    };
 
-  const handleAddPatient = async () => {
-    if (!newPatient.full_name) { notify('Vui lòng nhập họ tên'); return; }
-    try {
-      await axios.post(`${API}/patients`, newPatient, getAuth());
-      notify('Đã thêm bệnh nhân mới');
-      setShowAddPatient(false);
-      setNewPatient({ full_name: '', cccd: '', date_of_birth: '', phone: '', address: '', health_insurance_id: '' });
-      loadData();
-    } catch (e) { notify(e.response?.data?.error || 'Lỗi thêm bệnh nhân'); }
-  };
+    return (
+        <div style={{ padding: '15px', fontFamily: 'Arial, sans-serif' }}>
+            <h2 style={{ color: '#0984e3', borderBottom: '3px solid #0984e3', paddingBottom: '10px', marginBottom: '20px', fontWeight: '800' }}>
+                Tiếp nhận bệnh nhân - Lễ tân
+            </h2>
 
-  const handleAddAppt = async () => {
-    if (!newAppt.appointment_date) { notify('Vui lòng chọn ngày giờ khám'); return; }
-    try {
-      const res = await axios.post(`${API}/appointments`, newAppt, getAuth());
-      notify(`Đặt lịch thành công - Phiếu: ${res.data.examTicket}`);
-      setShowAddAppt(false);
-      setNewAppt({ patient_id: '', patient_name: '', department: 'Châm cứu', insurance_type: 'Không có', transfer_ticket: false, appointment_date: '', reason: '' });
-      loadData();
-    } catch (e) { notify(e.response?.data?.error || 'Lỗi đặt lịch'); }
-  };
-
-  const handlePrintTicket = (appt) => { setShowTicket(appt); setTimeout(() => window.print(), 300); };
-
-  const bhytColor = (type, transfer) => {
-    if (type === 'K3' && transfer) return '#d4edda';
-    if (type === 'K3') return '#cce5ff';
-    if (type === 'K2') return '#fff3cd';
-    if (type === 'K1') return '#fce8e8';
-    return '#f8f9fa';
-  };
-
-  return (
-    <div style={{ padding: 20, maxWidth: 1100, margin: '0 auto' }}>
-      <h2 style={{ color: '#c0392b', marginBottom: 4 }}>Quầy Tiếp Nhận & Lễ Tân</h2>
-      {msg && <div style={{ background: '#d4edda', color: '#155724', padding: '8px 16px', borderRadius: 6, marginBottom: 12 }}>{msg}</div>}
-
-      {/* Tabs */}
-      <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
-        {[['pending', `Chờ duyệt (${pending.length})`], ['approved', `Đã duyệt (${approved.length})`], ['called', `Đang gọi (${called.length})`], ['all', 'Tất cả']].map(([key, label]) => (
-          <button key={key} onClick={() => setTab(key)}
-            style={{ padding: '8px 18px', borderRadius: 6, border: 'none', cursor: 'pointer',
-              background: tab === key ? '#c0392b' : '#eee', color: tab === key ? '#fff' : '#333', fontWeight: tab === key ? 700 : 400 }}>
-            {label}
-          </button>
-        ))}
-        <button onClick={() => setShowAddPatient(true)}
-          style={{ padding: '8px 18px', borderRadius: 6, border: 'none', cursor: 'pointer', background: '#27ae60', color: '#fff', marginLeft: 'auto' }}>
-          + Thêm bệnh nhân
-        </button>
-        <button onClick={() => setShowAddAppt(true)}
-          style={{ padding: '8px 18px', borderRadius: 6, border: 'none', cursor: 'pointer', background: '#2980b9', color: '#fff' }}>
-          + Lập phiếu khám
-        </button>
-      </div>
-
-      {/* Hiển thị số đang gọi */}
-      {called.length > 0 && (
-        <div style={{ background: '#fff3cd', border: '2px solid #f39c12', borderRadius: 8, padding: '12px 20px', marginBottom: 16, display: 'flex', alignItems: 'center', gap: 16 }}>
-          <span style={{ fontSize: 18, fontWeight: 700, color: '#e67e22' }}>Đang gọi:</span>
-          {called.slice(-3).map(c => (
-            <span key={c.AppointmentID} style={{ background: '#e67e22', color: '#fff', padding: '4px 16px', borderRadius: 20, fontWeight: 700, fontSize: 16 }}>
-              STT {c.queue_number} - {c.patient_name}
-            </span>
-          ))}
-        </div>
-      )}
-
-      {/* Danh sách */}
-      <AppointmentTable
-        data={tab === 'pending' ? pending : tab === 'approved' ? approved : tab === 'called' ? called : appointments}
-        onApprove={handleApprove}
-        onCall={handleCall}
-        onCancel={handleCancel}
-        onPrintTicket={handlePrintTicket}
-        bhytColor={bhytColor}
-      />
-
-      {/* Modal thêm bệnh nhân */}
-      {showAddPatient && (
-        <Modal title="Thêm bệnh nhân mới" onClose={() => setShowAddPatient(false)}>
-          {[['full_name', 'Họ và tên *', 'text'], ['cccd', 'Số CCCD', 'text'], ['date_of_birth', 'Ngày sinh', 'date'],
-            ['phone', 'Số điện thoại', 'text'], ['address', 'Địa chỉ', 'text'], ['health_insurance_id', 'Số thẻ BHYT', 'text']].map(([key, label, type]) => (
-            <div key={key} style={{ marginBottom: 12 }}>
-              <label style={{ display: 'block', fontWeight: 600, marginBottom: 4 }}>{label}</label>
-              <input type={type} value={newPatient[key]} onChange={e => setNewPatient(p => ({ ...p, [key]: e.target.value }))}
-                style={{ width: '100%', padding: '8px 10px', border: '1px solid #ddd', borderRadius: 6, boxSizing: 'border-box' }} />
-            </div>
-          ))}
-          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-            <button onClick={() => setShowAddPatient(false)} style={btnStyle('#95a5a6')}>Hủy</button>
-            <button onClick={handleAddPatient} style={btnStyle('#27ae60')}>Lưu bệnh nhân</button>
-          </div>
-        </Modal>
-      )}
-
-      {/* Modal lập phiếu khám */}
-      {showAddAppt && (
-        <Modal title="Lập phiếu khám mới" onClose={() => setShowAddAppt(false)}>
-          <div style={{ marginBottom: 12 }}>
-            <label style={{ fontWeight: 600, display: 'block', marginBottom: 4 }}>Chọn bệnh nhân có sẵn</label>
-            <select value={newAppt.patient_id} onChange={e => setNewAppt(p => ({ ...p, patient_id: e.target.value, patient_name: '' }))}
-              style={{ width: '100%', padding: '8px 10px', border: '1px solid #ddd', borderRadius: 6 }}>
-              <option value="">-- Bệnh nhân mới (nhập tên bên dưới) --</option>
-              {patients.map(p => <option key={p.PatientID} value={p.PatientID}>{p.FullName} - {p.Phone}</option>)}
-            </select>
-          </div>
-          {!newAppt.patient_id && (
-            <div style={{ marginBottom: 12 }}>
-              <label style={{ fontWeight: 600, display: 'block', marginBottom: 4 }}>Họ tên bệnh nhân mới *</label>
-              <input value={newAppt.patient_name} onChange={e => setNewAppt(p => ({ ...p, patient_name: e.target.value }))}
-                style={{ width: '100%', padding: '8px 10px', border: '1px solid #ddd', borderRadius: 6, boxSizing: 'border-box' }} />
-            </div>
-          )}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
-            <div>
-              <label style={{ fontWeight: 600, display: 'block', marginBottom: 4 }}>Khoa khám</label>
-              <select value={newAppt.department} onChange={e => setNewAppt(p => ({ ...p, department: e.target.value }))}
-                style={{ width: '100%', padding: '8px 10px', border: '1px solid #ddd', borderRadius: 6 }}>
-                {['Châm cứu', 'Xoa bóp - Bấm huyệt', 'Phục hồi chức năng', 'Nội Tổng hợp', 'Khám chung'].map(d => <option key={d}>{d}</option>)}
-              </select>
-            </div>
-            <div>
-              <label style={{ fontWeight: 600, display: 'block', marginBottom: 4 }}>Loại BHYT</label>
-              <select value={newAppt.insurance_type} onChange={e => setNewAppt(p => ({ ...p, insurance_type: e.target.value }))}
-                style={{ width: '100%', padding: '8px 10px', border: '1px solid #ddd', borderRadius: 6 }}>
-                {Object.entries(INSURANCE_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-              </select>
-            </div>
-          </div>
-          <div style={{ marginBottom: 12 }}>
-            <label style={{ fontWeight: 600, display: 'block', marginBottom: 4 }}>Ngày giờ khám *</label>
-            <input type="datetime-local" value={newAppt.appointment_date} onChange={e => setNewAppt(p => ({ ...p, appointment_date: e.target.value }))}
-              style={{ width: '100%', padding: '8px 10px', border: '1px solid #ddd', borderRadius: 6, boxSizing: 'border-box' }} />
-          </div>
-          <div style={{ marginBottom: 12 }}>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 600, cursor: 'pointer' }}>
-              <input type="checkbox" checked={newAppt.transfer_ticket} onChange={e => setNewAppt(p => ({ ...p, transfer_ticket: e.target.checked }))} />
-              Có giấy chuyển tuyến hợp lệ
-            </label>
-          </div>
-          <div style={{ marginBottom: 12 }}>
-            <label style={{ fontWeight: 600, display: 'block', marginBottom: 4 }}>Lý do khám / Triệu chứng</label>
-            <textarea value={newAppt.reason} onChange={e => setNewAppt(p => ({ ...p, reason: e.target.value }))} rows={2}
-              style={{ width: '100%', padding: '8px 10px', border: '1px solid #ddd', borderRadius: 6, boxSizing: 'border-box' }} />
-          </div>
-          {newAppt.insurance_type === 'K3' && newAppt.transfer_ticket && (
-            <div style={{ background: '#d4edda', padding: '8px 12px', borderRadius: 6, marginBottom: 12, color: '#155724', fontWeight: 600 }}>
-              BHYT K3 + Chuyển tuyến → Miễn phí 100%
-            </div>
-          )}
-          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-            <button onClick={() => setShowAddAppt(false)} style={btnStyle('#95a5a6')}>Hủy</button>
-            <button onClick={handleAddAppt} style={btnStyle('#c0392b')}>Tạo phiếu khám</button>
-          </div>
-        </Modal>
-      )}
-
-      {/* Print ticket overlay */}
-      {showTicket && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <div ref={printRef} style={{ background: '#fff', padding: 32, borderRadius: 8, minWidth: 360, boxShadow: '0 8px 32px rgba(0,0,0,0.2)' }}>
-            <div style={{ textAlign: 'center', borderBottom: '2px solid #c0392b', paddingBottom: 12, marginBottom: 16 }}>
-              <div style={{ fontWeight: 700, fontSize: 14 }}>BỆNH VIỆN Y DƯỢC CỔ TRUYỀN KIÊN GIANG</div>
-              <div style={{ color: '#666', fontSize: 12 }}>Số 64 Đống Đa, Phường Rạch Giá, An Giang</div>
-            </div>
-            <div style={{ textAlign: 'center', marginBottom: 16 }}>
-              <div style={{ fontWeight: 700, fontSize: 18, color: '#c0392b' }}>PHIẾU KHÁM BỆNH</div>
-            </div>
-            <div style={{ fontSize: 32, fontWeight: 900, color: '#c0392b', textAlign: 'center', border: '3px solid #c0392b', borderRadius: 8, padding: '8px 0', marginBottom: 16 }}>
-              STT: {showTicket.queue_number}
-            </div>
-            <table style={{ width: '100%', fontSize: 13 }}>
-              <tbody>
-                {[['Mã phiếu', showTicket.exam_ticket], ['Bệnh nhân', showTicket.patient_name], ['Khoa khám', showTicket.Department], ['Loại BHYT', INSURANCE_LABELS[showTicket.insurance_type] || showTicket.insurance_type], ['Chuyển tuyến', showTicket.transfer_ticket ? 'Có' : 'Không'], ['Thời gian', new Date(showTicket.DateTime).toLocaleString('vi-VN')]].map(([k, v]) => (
-                  <tr key={k}>
-                    <td style={{ padding: '4px 0', color: '#666', width: 110 }}>{k}:</td>
-                    <td style={{ padding: '4px 0', fontWeight: 600 }}>{v}</td>
-                  </tr>
+            {/* TAB */}
+            <div style={{ display: 'flex', gap: '0', marginBottom: '20px', borderBottom: '2px solid #dfe6e9' }}>
+                {[
+                    { key: 'register', label: 'Đăng ký vãng lai' },
+                    { key: 'queue', label: `Danh sách hàng đợi (${queue.length})` }
+                ].map(tab => (
+                    <button key={tab.key} onClick={() => setActiveTab(tab.key)} style={{
+                        padding: '12px 25px', border: 'none', cursor: 'pointer', fontWeight: 'bold', fontSize: '14px',
+                        backgroundColor: activeTab === tab.key ? '#0984e3' : '#f1f2f6',
+                        color: activeTab === tab.key ? 'white' : '#636e72',
+                        borderBottom: activeTab === tab.key ? '2px solid #0984e3' : 'none'
+                    }}>
+                        {tab.label}
+                    </button>
                 ))}
-              </tbody>
-            </table>
-            {showTicket.insurance_type === 'K3' && showTicket.transfer_ticket && (
-              <div style={{ marginTop: 12, background: '#d4edda', padding: '6px 12px', borderRadius: 6, color: '#155724', fontWeight: 700, textAlign: 'center' }}>
-                BHYT K3 - MIỄN PHÍ 100%
-              </div>
-            )}
-            <div style={{ textAlign: 'center', marginTop: 16, fontSize: 11, color: '#888' }}>
-              Vui lòng giữ phiếu này để theo dõi số thứ tự
             </div>
-            <div style={{ display: 'flex', gap: 8, justifyContent: 'center', marginTop: 16 }}>
-              <button onClick={() => window.print()} style={btnStyle('#c0392b')}>In phiếu</button>
-              <button onClick={() => setShowTicket(null)} style={btnStyle('#95a5a6')}>Đóng</button>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
 
-function AppointmentTable({ data, onApprove, onCall, onCancel, onPrintTicket, bhytColor }) {
-  if (!data.length) return <div style={{ textAlign: 'center', padding: 40, color: '#999' }}>Không có lịch hẹn nào</div>;
-  return (
-    <div style={{ overflowX: 'auto' }}>
-      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-        <thead>
-          <tr style={{ background: '#c0392b', color: '#fff' }}>
-            {['STT', 'Phiếu', 'Bệnh nhân', 'Khoa', 'BHYT', 'Chuyển tuyến', 'Giờ khám', 'Trạng thái', 'Thao tác'].map(h => (
-              <th key={h} style={{ padding: '10px 8px', textAlign: 'left', whiteSpace: 'nowrap' }}>{h}</th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {data.map(a => (
-            <tr key={a.AppointmentID} style={{ background: bhytColor(a.insurance_type, a.transfer_ticket), borderBottom: '1px solid #eee' }}>
-              <td style={{ padding: '8px', fontWeight: 700, fontSize: 18, color: '#c0392b' }}>{a.queue_number || '-'}</td>
-              <td style={{ padding: '8px', fontWeight: 600, whiteSpace: 'nowrap' }}>{a.exam_ticket || '-'}</td>
-              <td style={{ padding: '8px' }}>{a.patient_name || '-'}</td>
-              <td style={{ padding: '8px', whiteSpace: 'nowrap' }}>{a.Department}</td>
-              <td style={{ padding: '8px', whiteSpace: 'nowrap' }}>{a.insurance_type}</td>
-              <td style={{ padding: '8px', textAlign: 'center' }}>{a.transfer_ticket ? '✓' : '-'}</td>
-              <td style={{ padding: '8px', whiteSpace: 'nowrap' }}>{a.DateTime ? new Date(a.DateTime).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' }) : '-'}</td>
-              <td style={{ padding: '8px' }}>
-                <span style={{ padding: '2px 8px', borderRadius: 12, fontSize: 11, fontWeight: 600,
-                  background: a.status_flow === 'called' ? '#f39c12' : a.is_approved ? '#27ae60' : '#e74c3c',
-                  color: '#fff' }}>
-                  {a.status_flow === 'called' ? 'Đang gọi' : a.is_approved ? 'Đã duyệt' : 'Chờ duyệt'}
-                </span>
-              </td>
-              <td style={{ padding: '8px' }}>
-                <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                  {!a.is_approved && <button onClick={() => onApprove(a.AppointmentID)} style={btnSmall('#27ae60')}>Duyệt</button>}
-                  {a.is_approved && a.status_flow !== 'called' && <button onClick={() => onCall(a)} style={btnSmall('#e67e22')}>Gọi số</button>}
-                  <button onClick={() => onPrintTicket(a)} style={btnSmall('#2980b9')}>In phiếu</button>
-                  {a.status_flow !== 'paid' && <button onClick={() => onCancel(a.AppointmentID)} style={btnSmall('#e74c3c')}>Hủy</button>}
+            {/* TAB 1: FORM ĐĂNG KÝ */}
+            {activeTab === 'register' && (
+                <div style={{ display: 'flex', gap: '30px', alignItems: 'flex-start' }}>
+                    <div style={{ flex: 1, backgroundColor: 'white', padding: '25px', borderRadius: '10px', boxShadow: '0 2px 10px rgba(0,0,0,0.08)', border: '1px solid #dfe6e9' }}>
+                        <h3 style={{ marginTop: 0, color: '#2c3e50', borderBottom: '2px solid #0984e3', paddingBottom: '10px' }}>
+                            ĐĂNG KÝ KHÁCH VÃNG LAI (OFFLINE)
+                        </h3>
+                        <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '15px', marginTop: '20px' }}>
+                            <div>
+                                <label style={{ fontWeight: 'bold', display: 'block', marginBottom: '6px' }}>Họ và tên Bệnh nhân <span style={{ color: 'red' }}>*</span></label>
+                                <input type="text" value={formData.patientName} onChange={e => setFormData({ ...formData, patientName: e.target.value })} required
+                                    style={{ width: '100%', padding: '10px', border: '1px solid #bdc3c7', borderRadius: '6px', fontSize: '14px', boxSizing: 'border-box' }} />
+                            </div>
+                            <div style={{ display: 'flex', gap: '15px' }}>
+                                <div style={{ flex: 1 }}>
+                                    <label style={{ fontWeight: 'bold', display: 'block', marginBottom: '6px' }}>Ngày sinh</label>
+                                    <input type="date" value={formData.dob} onChange={e => setFormData({ ...formData, dob: e.target.value })}
+                                        style={{ width: '100%', padding: '10px', border: '1px solid #bdc3c7', borderRadius: '6px', fontSize: '14px', boxSizing: 'border-box' }} />
+                                </div>
+                                <div style={{ flex: 1 }}>
+                                    <label style={{ fontWeight: 'bold', display: 'block', marginBottom: '6px' }}>Số điện thoại <span style={{ color: 'red' }}>*</span></label>
+                                    <input type="text" value={formData.phone} onChange={e => setFormData({ ...formData, phone: e.target.value })} required
+                                        style={{ width: '100%', padding: '10px', border: '1px solid #bdc3c7', borderRadius: '6px', fontSize: '14px', boxSizing: 'border-box' }} />
+                                </div>
+                            </div>
+                            <div>
+                                <label style={{ fontWeight: 'bold', display: 'block', marginBottom: '6px' }}>Mã thẻ BHYT (nếu có)</label>
+                                <input type="text" value={formData.healthInsuranceID} onChange={e => setFormData({ ...formData, healthInsuranceID: e.target.value })}
+                                    placeholder="Nhập mã thẻ BHYT..."
+                                    style={{ width: '100%', padding: '10px', border: '1px solid #bdc3c7', borderRadius: '6px', fontSize: '14px', boxSizing: 'border-box' }} />
+                            </div>
+                            {formData.healthInsuranceID && (
+                                <div style={{ backgroundColor: '#fff3cd', padding: '12px', borderRadius: '6px', border: '1px solid #ffc107' }}>
+                                    <label style={{ display: 'flex', alignItems: 'center', gap: '10px', fontWeight: 'bold', color: '#856404', cursor: 'pointer' }}>
+                                        <input type="checkbox" checked={formData.isTransfer} onChange={e => setFormData({ ...formData, isTransfer: e.target.checked })} />
+                                        Bệnh nhân có Giấy chuyển tuyến (BHYT K3 - Miễn phí 100%)
+                                    </label>
+                                </div>
+                            )}
+                            <div>
+                                <label style={{ fontWeight: 'bold', display: 'block', marginBottom: '6px' }}>Khoa khám</label>
+                                <select value={formData.department} onChange={e => setFormData({ ...formData, department: e.target.value })}
+                                    style={{ width: '100%', padding: '10px', border: '1px solid #bdc3c7', borderRadius: '6px', fontSize: '14px', boxSizing: 'border-box' }}>
+                                    {departments.map(d => <option key={d} value={d}>{d}</option>)}
+                                </select>
+                            </div>
+                            <div>
+                                <label style={{ fontWeight: 'bold', display: 'block', marginBottom: '6px' }}>Lý do khám <span style={{ color: 'red' }}>*</span></label>
+                                <textarea value={formData.reason} onChange={e => setFormData({ ...formData, reason: e.target.value })} required
+                                    style={{ width: '100%', padding: '10px', border: '1px solid #bdc3c7', borderRadius: '6px', fontSize: '14px', height: '70px', resize: 'vertical', boxSizing: 'border-box' }}></textarea>
+                            </div>
+                            <button type="submit" style={{ backgroundColor: '#27ae60', color: 'white', padding: '14px', border: 'none', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', fontSize: '15px' }}>
+                                LƯU & CẤP SỐ KHÁM
+                            </button>
+                        </form>
+                    </div>
+
+                    {/* PHIẾU IN */}
+                    {ticket && (
+                        <div style={{ flex: '0 0 340px' }}>
+                            <div id="print-ticket" style={{ border: '2px dashed #2c3e50', padding: '25px', backgroundColor: '#fdfbfb', textAlign: 'center', borderRadius: '8px' }}>
+                                <div style={{ fontSize: '13px', fontWeight: 'bold', color: '#2c3e50', textTransform: 'uppercase' }}>
+                                    Bệnh viện Y Dược Cổ Truyền Kiên Giang
+                                </div>
+                                <div style={{ fontSize: '12px', color: '#7f8c8d', marginTop: '3px' }}>PHIẾU CẤP SỐ THỨ TỰ</div>
+                                <hr style={{ borderTop: '1px solid #ccc', margin: '12px 0' }} />
+                                <div style={{ fontSize: '60px', fontWeight: 'bold', color: '#e74c3c', margin: '10px 0', lineHeight: 1 }}>
+                                    {ticket.QueueNumber < 10 ? `0${ticket.QueueNumber}` : ticket.QueueNumber}
+                                </div>
+                                <div style={{ fontSize: '18px', fontWeight: 'bold', marginBottom: '8px' }}>{ticket.PatientName}</div>
+                                <div style={{ fontSize: '14px', color: '#2980b9', marginBottom: '5px' }}>Khoa: {ticket.Department}</div>
+                                {ticket.HealthInsuranceID && (
+                                    <div style={{ fontSize: '13px', color: '#27ae60', fontWeight: 'bold' }}>
+                                        BHYT: {ticket.HealthInsuranceID}
+                                        {ticket.InsuranceType === 'BHYT_K3' && <span style={{ color: '#c0392b' }}> (K3 - Chuyển tuyến)</span>}
+                                    </div>
+                                )}
+                                <div style={{ fontSize: '11px', color: '#95a5a6', marginTop: '8px' }}>Giờ cấp: {ticket.Time}</div>
+                                <hr style={{ borderTop: '1px dashed #ccc', margin: '12px 0' }} />
+                                <div style={{ fontSize: '11px', color: '#7f8c8d', fontStyle: 'italic' }}>Vui lòng giữ phiếu và chờ gọi số</div>
+                            </div>
+                            <button onClick={printTicket} style={{ width: '100%', marginTop: '12px', padding: '10px', border: '2px solid #2c3e50', cursor: 'pointer', backgroundColor: 'white', fontWeight: 'bold', borderRadius: '6px', fontSize: '14px' }}>
+                                In phiếu số
+                            </button>
+                            <button onClick={() => setTicket(null)} style={{ width: '100%', marginTop: '8px', padding: '8px', border: 'none', cursor: 'pointer', backgroundColor: '#e2e8f0', borderRadius: '6px', fontSize: '13px' }}>
+                                Đóng
+                            </button>
+                        </div>
+                    )}
                 </div>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
+            )}
 
-function Modal({ title, onClose, children }) {
-  return (
-    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 999, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-      <div style={{ background: '#fff', borderRadius: 10, padding: 28, minWidth: 460, maxWidth: 560, maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 8px 32px rgba(0,0,0,0.2)' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
-          <h3 style={{ margin: 0, color: '#c0392b' }}>{title}</h3>
-          <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: 22, cursor: 'pointer', color: '#999' }}>×</button>
+            {/* TAB 2: DANH SÁCH HÀNG ĐỢI */}
+            {activeTab === 'queue' && (
+                <div>
+                    {calledNumber && (
+                        <div style={{ backgroundColor: '#2980b9', color: 'white', padding: '15px 20px', borderRadius: '8px', marginBottom: '20px', fontSize: '18px', fontWeight: 'bold', textAlign: 'center' }}>
+                            ĐANG GỌI SỐ: {calledNumber < 10 ? `0${calledNumber}` : calledNumber} - Mời bệnh nhân vào phòng khám!
+                        </div>
+                    )}
+                    <div style={{ overflowX: 'auto', backgroundColor: 'white', borderRadius: '10px', boxShadow: '0 2px 10px rgba(0,0,0,0.05)', border: '1px solid #dfe6e9' }}>
+                        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                            <thead style={{ backgroundColor: '#0984e3', color: 'white' }}>
+                                <tr>
+                                    <th style={{ padding: '14px', textAlign: 'center' }}>Số TT</th>
+                                    <th style={{ padding: '14px', textAlign: 'left' }}>Họ tên</th>
+                                    <th style={{ padding: '14px', textAlign: 'left' }}>Khoa khám</th>
+                                    <th style={{ padding: '14px', textAlign: 'center' }}>Nguồn</th>
+                                    <th style={{ padding: '14px', textAlign: 'center' }}>BHYT</th>
+                                    <th style={{ padding: '14px', textAlign: 'center' }}>Trạng thái</th>
+                                    <th style={{ padding: '14px', textAlign: 'center' }}>Thao tác</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {queue.length === 0 ? (
+                                    <tr><td colSpan="7" style={{ padding: '30px', textAlign: 'center', color: '#95a5a6', fontStyle: 'italic' }}>Chưa có bệnh nhân nào hôm nay.</td></tr>
+                                ) : queue.map((item, idx) => {
+                                    const statusInfo = getStatusLabel(item.Status);
+                                    const canApprove = ['Pending', 'WalkIn'].includes(item.Status);
+                                    const canCall = item.Status === 'Approved';
+                                    return (
+                                        <tr key={item.AppointmentID} style={{ borderBottom: '1px solid #f1f5f9', backgroundColor: idx % 2 === 0 ? '#fff' : '#f8fafc' }}>
+                                            <td style={{ padding: '14px', textAlign: 'center' }}>
+                                                <span style={{ fontSize: '22px', fontWeight: 'bold', color: '#e74c3c' }}>
+                                                    {item.QueueNumber < 10 ? `0${item.QueueNumber}` : item.QueueNumber}
+                                                </span>
+                                            </td>
+                                            <td style={{ padding: '14px', fontWeight: 'bold', color: '#1e293b' }}>{item.PatientFullName}</td>
+                                            <td style={{ padding: '14px', color: '#475569' }}>{item.Department}</td>
+                                            <td style={{ padding: '14px', textAlign: 'center' }}>
+                                                <span style={{ fontSize: '12px', padding: '3px 8px', borderRadius: '12px', backgroundColor: item.AppointmentSource === 'Online' ? '#e8f4fd' : '#fff3cd', color: item.AppointmentSource === 'Online' ? '#0984e3' : '#856404', fontWeight: 'bold' }}>
+                                                    {item.AppointmentSource === 'Online' ? 'Online' : 'Offline'}
+                                                </span>
+                                            </td>
+                                            <td style={{ padding: '14px', textAlign: 'center', fontSize: '12px', color: item.InsuranceType !== 'None' ? '#27ae60' : '#95a5a6' }}>
+                                                {item.InsuranceType === 'BHYT_K3' ? 'BHYT K3' : item.InsuranceType === 'BHYT' ? 'BHYT' : 'Tự túc'}
+                                                {item.TransferTicket ? ' + Chuyển tuyến' : ''}
+                                            </td>
+                                            <td style={{ padding: '14px', textAlign: 'center' }}>
+                                                <span style={{ padding: '5px 10px', borderRadius: '20px', fontSize: '12px', fontWeight: 'bold', backgroundColor: statusInfo.color + '22', color: statusInfo.color }}>
+                                                    {statusInfo.label}
+                                                </span>
+                                            </td>
+                                            <td style={{ padding: '14px', textAlign: 'center' }}>
+                                                <div style={{ display: 'flex', gap: '6px', justifyContent: 'center' }}>
+                                                    {canApprove && (
+                                                        <button onClick={() => handleApprove(item.AppointmentID)} style={{ padding: '6px 12px', backgroundColor: '#27ae60', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '12px' }}>
+                                                            Duyệt
+                                                        </button>
+                                                    )}
+                                                    {canCall && (
+                                                        <button onClick={() => handleCall(item.AppointmentID, item.QueueNumber)} style={{ padding: '6px 12px', backgroundColor: '#2980b9', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '12px' }}>
+                                                            Gọi số
+                                                        </button>
+                                                    )}
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    );
+                                })}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            )}
         </div>
-        {children}
-      </div>
-    </div>
-  );
-}
+    );
+};
 
-const btnStyle = (bg) => ({ padding: '8px 18px', background: bg, color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 600 });
-const btnSmall = (bg) => ({ padding: '4px 10px', background: bg, color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 12, fontWeight: 600 });
+export default Reception;
