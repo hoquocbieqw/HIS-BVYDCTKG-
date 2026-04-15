@@ -1,161 +1,259 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 
+const API = 'http://localhost:3001';
+
 const PharmacyDispense = () => {
-    const [pendingPrescriptions, setPendingPrescriptions] = useState([]);
+    const [readyList, setReadyList] = useState([]);
     const [selectedRecord, setSelectedRecord] = useState(null);
     const [prescriptionDetails, setPrescriptionDetails] = useState([]);
-    const [dispenseStatus, setDispenseStatus] = useState('');
+    const [dispensing, setDispensing] = useState(false);
+    const [barcodeInput, setBarcodeInput] = useState('');
 
-    const getAuthHeader = () => ({
-        headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
-    });
+    const getAuthHeader = () => ({ headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } });
 
-    useEffect(() => {
-        fetchPendingPrescriptions();
-    }, []);
+    useEffect(() => { fetchReadyList(); }, []);
 
-    const fetchPendingPrescriptions = async () => {
+    const fetchReadyList = async () => {
         try {
-            const res = await axios.get('http://localhost:3001/api/prescriptions/history', getAuthHeader());
-            // Lọc ra những đơn thuốc đang ở trạng thái 'Pending' hoặc 'Paid' chờ phát
-            // Trong thực tế, chỉ phát thuốc khi Thu ngân đã thu tiền (Paid), ở đây ta hiển thị danh sách chờ.
-            setPendingPrescriptions(res.data);
-        } catch (err) {
-            alert("Lỗi tải danh sách đơn thuốc: " + err.message);
-        }
+            const res = await axios.get(`${API}/api/pharmacy/ready-to-dispense`, getAuthHeader());
+            setReadyList(res.data);
+        } catch (err) { alert("Loi tai danh sach: " + err.message); }
     };
 
-    const handleSelectPrescription = async (record) => {
+    const handleSelectRecord = async (record) => {
         setSelectedRecord(record);
-        setDispenseStatus('');
+        setDispensing(false);
         try {
-            const res = await axios.get(`http://localhost:3001/api/prescriptions/details/${record.RecordID}`, getAuthHeader());
-            
-            // Giả lập logic FEFO (First Expired, First Out) từ Database. 
-            // Hệ thống tự động map thuốc với Lô (Batch) có hạn sử dụng gần nhất.
-            const detailsWithBatch = res.data.map((item, index) => ({
-                ...item,
-                BatchNumber: `LOT-2026-${String(item.MedicineID || index).padStart(3, '0')}`,
-                ExpiryDate: new Date(new Date().setMonth(new Date().getMonth() + Math.floor(Math.random() * 12) + 1)).toLocaleDateString('vi-VN'),
-                AllocatedFEFO: true
-            }));
-            
-            setPrescriptionDetails(detailsWithBatch);
-        } catch (err) {
-            alert("Lỗi tải chi tiết đơn thuốc: " + err.message);
-        }
+            const res = await axios.get(`${API}/api/prescriptions/details/${record.RecordID}`, getAuthHeader());
+            // Dữ liệu đã được backend sắp xếp theo FEFO (ExpiryDate ASC)
+            setPrescriptionDetails(res.data);
+        } catch (err) { alert("Loi tai chi tiet don thuoc: " + err.message); }
     };
 
-    const handleConfirmDispense = async (e) => {
+    // Quét mã vạch từ biên lai
+    const handleBarcodeSearch = (e) => {
         e.preventDefault();
-        
-        const confirmPrint = window.confirm("XÁC NHẬN CẤP PHÁT:\nHệ thống sẽ trừ kho theo nguyên tắc FEFO. Bạn có muốn in hướng dẫn sử dụng dán lên túi thuốc không?");
-        if (!confirmPrint) return;
+        // Format mã: BR-{RecordID}
+        const match = barcodeInput.match(/BR-(\d+)/i);
+        if (!match) return alert("Ma vach khong hop le. Dinh dang: BR-{SoHoSo}");
+        const recordId = parseInt(match[1]);
+        const found = readyList.find(r => r.RecordID === recordId);
+        if (!found) return alert(`Khong tim thay don thuoc #${recordId} hoac chua duoc thanh toan.`);
+        handleSelectRecord(found);
+        setBarcodeInput('');
+    };
 
-        // Giả lập API gọi cập nhật trạng thái
-        // Thực tế sẽ gọi axios.post cập nhật Status = 'Dispensed'
-        setDispenseStatus('ĐÃ XUẤT KHO VÀ CẤP PHÁT THÀNH CÔNG');
-        
-        setTimeout(() => {
+    const handleConfirmDispense = async () => {
+        if (!selectedRecord) return;
+        if (!window.confirm("XAC NHAN XUAT KHO:\nHe thong se tru ton kho theo nguyen tac FEFO (Hang het han truoc, xuat truoc). Tiep tuc?")) return;
+
+        try {
+            setDispensing(true);
+            await axios.post(`${API}/api/prescriptions/dispense/${selectedRecord.RecordID}`, {}, getAuthHeader());
+            alert("Xuat kho va cap phat thuoc thanh cong!");
+            fetchReadyList();
             setSelectedRecord(null);
             setPrescriptionDetails([]);
-            setDispenseStatus('');
-            fetchPendingPrescriptions();
-        }, 3000);
+        } catch (err) {
+            alert("Loi cap phat: " + (err.response?.data?.message || err.message));
+        } finally {
+            setDispensing(false);
+        }
+    };
+
+    const handlePrintLabel = () => {
+        if (!selectedRecord || prescriptionDetails.length === 0) return;
+        const win = window.open('', '_blank', 'width=420,height=700');
+        win.document.write(`
+            <html><head><title>Nhan Thuoc</title>
+            <style>body{font-family:Arial;padding:15px;max-width:400px;}
+            .header{text-align:center;border-bottom:2px solid #333;padding-bottom:10px;margin-bottom:15px;}
+            .patient{font-size:16px;font-weight:bold;margin:10px 0;}
+            .drug{border:1px solid #ccc;padding:10px;margin:8px 0;border-radius:4px;}
+            .drug-name{font-weight:bold;font-size:14px;}
+            .dosage{font-size:13px;color:#333;margin-top:5px;}
+            .batch{font-size:11px;color:#666;margin-top:3px;}
+            .footer{border-top:1px dashed #999;margin-top:15px;padding-top:10px;font-size:12px;}
+            </style></head><body>
+            <div class="header">
+                <div style="font-weight:bold;font-size:15px">BV YDCT KIEN GIANG</div>
+                <div style="font-size:13px">PHIEU CAP PHAT THUOC</div>
+            </div>
+            <div class="patient">Benh nhan: ${selectedRecord.PatientName}</div>
+            <div style="font-size:13px;margin-bottom:12px">
+                MA BA: #${selectedRecord.RecordID} | BHYT: ${selectedRecord.InsuranceType || 'Khong'}
+                ${selectedRecord.TotalAmount === 0 ? '<br><strong style="color:green">THUOC MIEN PHI (BHYT 100%)</strong>' : ''}
+            </div>
+            ${prescriptionDetails.map(item => `
+                <div class="drug">
+                    <div class="drug-name">${item.MedicineName}</div>
+                    <div class="dosage">So luong: ${item.Quantity} ${item.Unit}</div>
+                    <div class="dosage">Lieu dung: ${item.Dosage}</div>
+                    <div class="batch">Lo: ${item.BatchNumber || 'N/A'} | Han dung: ${item.ExpiryDate ? new Date(item.ExpiryDate).toLocaleDateString('vi-VN') : 'N/A'}</div>
+                </div>
+            `).join('')}
+            <div class="footer">
+                Ngay xuat: ${new Date().toLocaleString('vi-VN')}<br>
+                Duoc si: _______________<br>
+                Ky nhan: _______________
+            </div>
+            </body></html>
+        `);
+        win.document.close();
+        win.print();
     };
 
     return (
         <div style={{ padding: '20px', display: 'flex', gap: '20px', alignItems: 'flex-start' }}>
-            {/* CỘT 1: DANH SÁCH ĐƠN THUỐC CHỜ PHÁT */}
-            <div style={{ width: '380px', backgroundColor: '#fff', border: '1px solid #bdc3c7', padding: '15px' }}>
-                <h3 style={{ marginTop: 0, color: '#2c3e50', borderBottom: '2px solid #8e44ad', paddingBottom: '10px' }}>HÀNG ĐỢI CẤP PHÁT THUỐC</h3>
-                {pendingPrescriptions.length === 0 ? <p style={{ color: '#7f8c8d' }}>Không có đơn thuốc nào chờ cấp phát.</p> : null}
-                
-                <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
-                    {pendingPrescriptions.map(record => (
-                        <li key={record.RecordID} 
-                            style={{ 
-                                padding: '12px', borderBottom: '1px solid #ecf0f1', cursor: 'pointer', 
-                                backgroundColor: selectedRecord?.RecordID === record.RecordID ? '#f5eef8' : 'transparent',
-                                borderLeft: selectedRecord?.RecordID === record.RecordID ? '4px solid #8e44ad' : '4px solid transparent'
-                            }}
-                            onClick={() => handleSelectPrescription(record)}
-                        >
-                            <div style={{ fontWeight: 'bold', fontSize: '15px', color: '#2c3e50' }}>{record.PatientName}</div>
-                            <div style={{ fontSize: '13px', color: '#7f8c8d', marginTop: '4px' }}>Mã BA: {record.RecordID} | {new Date(record.AppointmentDate).toLocaleDateString('vi-VN')}</div>
-                            <div style={{ fontSize: '12px', color: '#8e44ad', marginTop: '4px', fontWeight: 'bold', textTransform: 'uppercase' }}>Trạng thái: Chờ xuất kho</div>
-                        </li>
-                    ))}
-                </ul>
+            {/* CỘT 1: HÀNG ĐỢI */}
+            <div style={{ width: '360px', background: '#fff', border: '1px solid #bdc3c7', padding: '15px', flexShrink: 0 }}>
+                <h3 style={{ margin: '0 0 12px', color: '#2c3e50', borderBottom: '2px solid #8e44ad', paddingBottom: '8px' }}>
+                    HANG DOI CAP PHAT THUOC
+                </h3>
+
+                {/* Quét mã vạch */}
+                <form onSubmit={handleBarcodeSearch} style={{ marginBottom: '15px', display: 'flex', gap: '8px' }}>
+                    <input type="text" value={barcodeInput} onChange={e => setBarcodeInput(e.target.value)}
+                        placeholder="Quet ma vach bien lai (BR-...)..."
+                        style={{ flex: 1, padding: '8px', border: '1px solid #bdc3c7', fontSize: '13px' }} />
+                    <button type="submit" style={{ background: '#8e44ad', color: '#fff', border: 'none', padding: '8px 12px', cursor: 'pointer', fontWeight: 'bold', fontSize: '13px' }}>Tim</button>
+                </form>
+
+                <div style={{ marginBottom: '10px', fontSize: '12px', color: '#7f8c8d' }}>
+                    Chi hien thi don thuoc da duoc Thu ngan xac nhan thanh toan.
+                </div>
+
+                {readyList.length === 0 ? (
+                    <p style={{ color: '#7f8c8d', textAlign: 'center', padding: '20px' }}>Chua co don thuoc nao cho cap phat.</p>
+                ) : (
+                    <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
+                        {readyList.map(record => (
+                            <li key={record.RecordID}
+                                onClick={() => handleSelectRecord(record)}
+                                style={{
+                                    padding: '12px', borderBottom: '1px solid #ecf0f1', cursor: 'pointer',
+                                    background: selectedRecord?.RecordID === record.RecordID ? '#f5eef8' : 'transparent',
+                                    borderLeft: `4px solid ${selectedRecord?.RecordID === record.RecordID ? '#8e44ad' : 'transparent'}`
+                                }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                    <span style={{ fontWeight: 'bold', fontSize: '15px', color: '#2c3e50' }}>{record.PatientName}</span>
+                                    <span style={{ fontSize: '12px', color: '#7f8c8d' }}>#{record.RecordID}</span>
+                                </div>
+                                <div style={{ fontSize: '12px', color: '#7f8c8d', marginTop: '3px' }}>
+                                    {new Date(record.AppointmentDate).toLocaleDateString('vi-VN')}
+                                </div>
+                                <div style={{ display: 'flex', gap: '5px', marginTop: '4px' }}>
+                                    {record.InsuranceType && record.InsuranceType !== 'None' && (
+                                        <span style={{ fontSize: '11px', background: record.TotalAmount === 0 ? '#dcfce7' : '#fef3c7', color: record.TotalAmount === 0 ? '#16a34a' : '#d97706', padding: '1px 6px', borderRadius: '3px', fontWeight: 'bold' }}>
+                                            BHYT {record.InsuranceType} {record.TotalAmount === 0 ? '- MIEN PHI' : ''}
+                                        </span>
+                                    )}
+                                    <span style={{ fontSize: '11px', background: '#f0fdf4', color: '#16a34a', padding: '1px 6px', borderRadius: '3px', fontWeight: 'bold', border: '1px solid #bbf7d0' }}>
+                                        DA TT
+                                    </span>
+                                </div>
+                            </li>
+                        ))}
+                    </ul>
+                )}
             </div>
 
-            {/* CỘT 2: CHI TIẾT ĐƠN THUỐC & FEFO QUẢN LÝ LÔ */}
-            <div style={{ flex: 1, backgroundColor: '#fff', border: '1px solid #bdc3c7', padding: '20px' }}>
-                <h3 style={{ marginTop: 0, color: '#2c3e50', borderBottom: '2px solid #8e44ad', paddingBottom: '10px' }}>CHI TIẾT ĐƠN THUỐC & ÁP DỤNG FEFO</h3>
-                
+            {/* CỘT 2: CHI TIẾT & XUẤT KHO */}
+            <div style={{ flex: 1, background: '#fff', border: '1px solid #bdc3c7', padding: '20px' }}>
+                <h3 style={{ margin: '0 0 15px', color: '#2c3e50', borderBottom: '2px solid #8e44ad', paddingBottom: '8px' }}>
+                    CHI TIET DON THUOC & AP DUNG FEFO
+                </h3>
+
                 {!selectedRecord ? (
-                    <div style={{ color: '#7f8c8d', textAlign: 'center', padding: '40px 0' }}>Vui lòng chọn đơn thuốc bên danh sách hàng đợi hoặc quét mã vạch trên biên lai.</div>
+                    <div style={{ color: '#7f8c8d', textAlign: 'center', padding: '60px 0' }}>
+                        Chon don thuoc tu danh sach hoac quet ma vach tren bien lai thu tien.
+                    </div>
                 ) : (
                     <div>
-                        <div style={{ backgroundColor: '#f9f9f9', padding: '15px', border: '1px dashed #7f8c8d', marginBottom: '15px' }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                        {/* Header thông tin */}
+                        <div style={{ background: '#f9f9f9', padding: '15px', border: '1px dashed #7f8c8d', marginBottom: '15px' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                                 <div>
-                                    <div style={{ marginBottom: '8px' }}><strong>Bệnh nhân:</strong> <span style={{ color: '#c0392b', fontSize: '16px', fontWeight: 'bold', textTransform: 'uppercase' }}>{selectedRecord.PatientName}</span></div>
-                                    <div style={{ marginBottom: '8px' }}><strong>Chẩn đoán:</strong> {selectedRecord.Diagnosis}</div>
+                                    <div style={{ marginBottom: '6px' }}>
+                                        <strong>Benh nhan: </strong>
+                                        <span style={{ color: '#c0392b', fontSize: '16px', fontWeight: 'bold' }}>{selectedRecord.PatientName}</span>
+                                    </div>
+                                    <div style={{ marginBottom: '6px' }}><strong>Chan doan:</strong> {selectedRecord.Diagnosis}</div>
+                                    <div><strong>BHYT:</strong> {selectedRecord.InsuranceType || 'Khong'} {selectedRecord.TransferTicket ? '- Dung tuyen' : ''}</div>
                                 </div>
                                 <div style={{ textAlign: 'right' }}>
-                                    <div style={{ backgroundColor: '#ecf0f1', padding: '5px 10px', fontWeight: 'bold', border: '1px solid #bdc3c7' }}>MÃ QUÉT: BR-{selectedRecord.RecordID}</div>
+                                    <div style={{ background: '#ecf0f1', padding: '6px 12px', fontWeight: 'bold', border: '1px solid #bdc3c7', fontSize: '13px' }}>
+                                        MA QUET: BR-{selectedRecord.RecordID}
+                                    </div>
+                                    {selectedRecord.TotalAmount === 0 && (
+                                        <div style={{ marginTop: '8px', background: '#dcfce7', color: '#16a34a', padding: '4px 10px', fontWeight: 'bold', fontSize: '13px', border: '1px solid #16a34a' }}>
+                                            THUOC MIEN PHI
+                                        </div>
+                                    )}
                                 </div>
                             </div>
                         </div>
 
-                        {dispenseStatus ? (
-                            <div style={{ backgroundColor: '#27ae60', color: 'white', padding: '20px', textAlign: 'center', fontWeight: 'bold', fontSize: '18px', border: '2px solid #1e8449' }}>
-                                {dispenseStatus}
-                            </div>
-                        ) : (
-                            <>
-                                <div style={{ marginBottom: '10px', fontSize: '13px', color: '#c0392b', fontWeight: 'bold' }}>* Hệ thống đã tự động phân bổ lô thuốc có hạn sử dụng gần nhất (FEFO).</div>
-                                <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '20px' }}>
-                                    <thead>
-                                        <tr style={{ backgroundColor: '#f4f6f7', borderBottom: '2px solid #bdc3c7' }}>
-                                            <th style={{ padding: '10px', textAlign: 'left', border: '1px solid #ecf0f1' }}>Tên thuốc / Vị thuốc</th>
-                                            <th style={{ padding: '10px', textAlign: 'center', border: '1px solid #ecf0f1' }}>ĐVT</th>
-                                            <th style={{ padding: '10px', textAlign: 'center', border: '1px solid #ecf0f1' }}>SL</th>
-                                            <th style={{ padding: '10px', textAlign: 'left', border: '1px solid #ecf0f1' }}>Mã Lô (Batch)</th>
-                                            <th style={{ padding: '10px', textAlign: 'center', border: '1px solid #ecf0f1' }}>Hạn SD</th>
-                                            <th style={{ padding: '10px', textAlign: 'left', border: '1px solid #ecf0f1' }}>Cách dùng</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        {prescriptionDetails.length === 0 ? (
-                                            <tr><td colSpan="6" style={{ padding: '10px', textAlign: 'center' }}>Đang tải dữ liệu đơn thuốc...</td></tr>
-                                        ) : (
-                                            prescriptionDetails.map((item, index) => (
-                                                <tr key={index} style={{ borderBottom: '1px solid #ecf0f1' }}>
-                                                    <td style={{ padding: '10px', fontWeight: 'bold', border: '1px solid #ecf0f1' }}>{item.MedicineName}</td>
-                                                    <td style={{ padding: '10px', textAlign: 'center', border: '1px solid #ecf0f1' }}>{item.Unit}</td>
-                                                    <td style={{ padding: '10px', textAlign: 'center', fontWeight: 'bold', color: '#2980b9', border: '1px solid #ecf0f1' }}>{item.Quantity}</td>
-                                                    <td style={{ padding: '10px', fontSize: '12px', border: '1px solid #ecf0f1' }}>{item.BatchNumber}</td>
-                                                    <td style={{ padding: '10px', textAlign: 'center', fontSize: '12px', color: '#c0392b', border: '1px solid #ecf0f1' }}>{item.ExpiryDate}</td>
-                                                    <td style={{ padding: '10px', fontSize: '13px', border: '1px solid #ecf0f1' }}>{item.Dosage}</td>
-                                                </tr>
-                                            ))
-                                        )}
-                                    </tbody>
-                                </table>
+                        <div style={{ marginBottom: '10px', fontSize: '13px', color: '#c0392b', fontWeight: 'bold' }}>
+                            He thong da tu dong phan bo lo thuoc co han su dung gan nhat (FEFO - First Expired, First Out).
+                        </div>
 
-                                <div style={{ display: 'flex', gap: '15px', justifyContent: 'flex-end' }}>
-                                    <button onClick={() => setSelectedRecord(null)} style={{ backgroundColor: '#95a5a6', color: 'white', padding: '12px 20px', border: 'none', fontWeight: 'bold', cursor: 'pointer' }}>
-                                        HỦY BỎ
-                                    </button>
-                                    <button onClick={handleConfirmDispense} disabled={prescriptionDetails.length === 0} style={{ backgroundColor: '#8e44ad', color: 'white', padding: '12px 30px', border: 'none', fontWeight: 'bold', cursor: 'pointer', opacity: prescriptionDetails.length === 0 ? 0.5 : 1 }}>
-                                        IN NHÃN & XUẤT KHO
-                                    </button>
-                                </div>
-                            </>
+                        {prescriptionDetails.length === 0 ? (
+                            <p style={{ color: '#7f8c8d', textAlign: 'center', padding: '20px' }}>Dang tai du lieu...</p>
+                        ) : (
+                            <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '20px' }}>
+                                <thead>
+                                    <tr style={{ background: '#f4f6f7', borderBottom: '2px solid #bdc3c7' }}>
+                                        <th style={{ padding: '10px', textAlign: 'left', border: '1px solid #ecf0f1' }}>Ten thuoc / Vi thuoc</th>
+                                        <th style={{ padding: '10px', textAlign: 'center', border: '1px solid #ecf0f1' }}>DVT</th>
+                                        <th style={{ padding: '10px', textAlign: 'center', border: '1px solid #ecf0f1' }}>SL</th>
+                                        <th style={{ padding: '10px', textAlign: 'left', border: '1px solid #ecf0f1' }}>Ma Lo (Batch)</th>
+                                        <th style={{ padding: '10px', textAlign: 'center', border: '1px solid #ecf0f1' }}>Han SD</th>
+                                        <th style={{ padding: '10px', textAlign: 'left', border: '1px solid #ecf0f1' }}>Lieu dung</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {prescriptionDetails.map((item, idx) => {
+                                        const isNearExpiry = item.ExpiryDate && (new Date(item.ExpiryDate) - new Date()) < 30 * 24 * 60 * 60 * 1000;
+                                        return (
+                                            <tr key={idx} style={{ borderBottom: '1px solid #ecf0f1' }}>
+                                                <td style={{ padding: '10px', fontWeight: 'bold', border: '1px solid #ecf0f1' }}>
+                                                    {item.MedicineName}
+                                                    {item.IsBHYT ? <span style={{ marginLeft: '5px', fontSize: '11px', color: '#27ae60', fontWeight: 'bold' }}>BHYT</span> : ''}
+                                                </td>
+                                                <td style={{ padding: '10px', textAlign: 'center', border: '1px solid #ecf0f1' }}>{item.Unit}</td>
+                                                <td style={{ padding: '10px', textAlign: 'center', fontWeight: 'bold', color: '#2980b9', border: '1px solid #ecf0f1' }}>{item.Quantity}</td>
+                                                <td style={{ padding: '10px', fontSize: '12px', border: '1px solid #ecf0f1' }}>
+                                                    {item.BatchNumber || 'Chua co lo'}
+                                                </td>
+                                                <td style={{ padding: '10px', textAlign: 'center', fontSize: '12px', color: isNearExpiry ? '#e74c3c' : '#555', fontWeight: isNearExpiry ? 'bold' : 'normal', border: '1px solid #ecf0f1' }}>
+                                                    {item.ExpiryDate ? new Date(item.ExpiryDate).toLocaleDateString('vi-VN') : 'N/A'}
+                                                    {isNearExpiry && <div style={{ fontSize: '10px', color: '#e74c3c' }}>SAP HET HAN</div>}
+                                                </td>
+                                                <td style={{ padding: '10px', fontSize: '13px', border: '1px solid #ecf0f1' }}>{item.Dosage}</td>
+                                            </tr>
+                                        );
+                                    })}
+                                </tbody>
+                            </table>
                         )}
+
+                        <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
+                            <button onClick={() => { setSelectedRecord(null); setPrescriptionDetails([]); }}
+                                style={{ background: '#95a5a6', color: '#fff', padding: '12px 20px', border: 'none', fontWeight: 'bold', cursor: 'pointer', borderRadius: '4px' }}>
+                                Huy Bo
+                            </button>
+                            <button onClick={handlePrintLabel} disabled={prescriptionDetails.length === 0}
+                                style={{ background: '#2980b9', color: '#fff', padding: '12px 20px', border: 'none', fontWeight: 'bold', cursor: 'pointer', borderRadius: '4px', opacity: prescriptionDetails.length === 0 ? 0.5 : 1 }}>
+                                In Nhan Thuoc
+                            </button>
+                            <button onClick={handleConfirmDispense}
+                                disabled={prescriptionDetails.length === 0 || dispensing}
+                                style={{ background: '#8e44ad', color: '#fff', padding: '12px 30px', border: 'none', fontWeight: 'bold', cursor: 'pointer', borderRadius: '4px', opacity: (prescriptionDetails.length === 0 || dispensing) ? 0.5 : 1 }}>
+                                {dispensing ? 'Dang Xuat Kho...' : 'XUAT KHO & CAP PHAT THUOC'}
+                            </button>
+                        </div>
                     </div>
                 )}
             </div>
