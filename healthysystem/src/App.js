@@ -37,7 +37,7 @@ function App() {
         const role = localStorage.getItem('role');
         if (!user) return <Navigate to="/login" replace />;
         if (!allowedRoles.includes(role)) {
-            alert("Bạn không có quyền truy cập trang này!");
+            alert('Bạn không có quyền truy cập trang này!');
             return <Navigate to="/dashboard" replace />;
         }
         return children;
@@ -53,29 +53,83 @@ function App() {
                     <MainLayout user={user} onLogout={handleLogout}>
                         <Routes>
                             <Route path="/dashboard" element={user ? <Dashboard user={user} /> : <Navigate to="/login" />} />
-                            
-                            {/* QT1: Tiếp nhận & Đăng ký Khám */}
-                            <Route path="/appointment" element={<ProtectedRoute allowedRoles={['Patient', 'Receptionist', 'Admin']}><Appointment /></ProtectedRoute>} />
-                            <Route path="/my-appointments" element={<ProtectedRoute allowedRoles={['Patient', 'Receptionist', 'Admin']}><PatientAppointments /></ProtectedRoute>} />
-                            <Route path="/reception" element={<ProtectedRoute allowedRoles={['Receptionist', 'Admin']}><Reception /></ProtectedRoute>} />
-                            <Route path="/patients" element={<ProtectedRoute allowedRoles={['Doctor', 'Nurse', 'Receptionist', 'Admin']}><PatientList /></ProtectedRoute>} />
-                            
-                            {/* QT2: Khám Bệnh & YHCT */}
-                            <Route path="/medical" element={<ProtectedRoute allowedRoles={['Doctor', 'Admin']}><MedicalRecords /></ProtectedRoute>} />
-                            <Route path="/treatment" element={<ProtectedRoute allowedRoles={['Doctor', 'Nurse', 'Admin']}><Treatment /></ProtectedRoute>} />
-                            <Route path="/my-health" element={<ProtectedRoute allowedRoles={['Patient', 'Admin']}><PatientHistory /></ProtectedRoute>} />
-                            
-                            {/* QT3: Thanh toán & Phát thuốc */}
-                            <Route path="/medicines" element={<ProtectedRoute allowedRoles={['Doctor', 'Pharmacist', 'Admin']}><MedicineManagement /></ProtectedRoute>} />
-                            <Route path="/dispense" element={<ProtectedRoute allowedRoles={['Pharmacist', 'Admin']}><PharmacyDispense /></ProtectedRoute>} />
-                            <Route path="/billing" element={<ProtectedRoute allowedRoles={['Cashier', 'Admin']}><Billing /></ProtectedRoute>} />
-                            
-                            {/* Báo cáo & Lịch chung */}
-                            <Route path="/schedule" element={<ProtectedRoute allowedRoles={['Doctor', 'Nurse', 'Receptionist', 'Admin']}><Schedule /></ProtectedRoute>} />
-                            <Route path="/admin/reports" element={<ProtectedRoute allowedRoles={['Admin', 'Cashier', 'Pharmacist']}><AdvancedReport /></ProtectedRoute>} />
-                            
-                            {/* Phân quyền User */}
-                            <Route path="/admin/users" element={<ProtectedRoute allowedRoles={['Admin']}><UserManagement /></ProtectedRoute>} />
+
+                            {/* QUY TRÌNH 1: TIẾP NHẬN & ĐĂNG KÝ */}
+                            <Route path="/appointment" element={
+                                <ProtectedRoute allowedRoles={['Patient', 'Receptionist']}>
+                                    <Appointment />
+                                </ProtectedRoute>
+                            } />
+                            <Route path="/my-appointments" element={
+                                <ProtectedRoute allowedRoles={['Patient']}>
+                                    <PatientAppointments />
+                                </ProtectedRoute>
+                            } />
+                            <Route path="/reception" element={
+                                <ProtectedRoute allowedRoles={['Receptionist']}>
+                                    <Reception />
+                                </ProtectedRoute>
+                            } />
+                            <Route path="/patients" element={
+                                <ProtectedRoute allowedRoles={['Doctor', 'Nurse', 'Receptionist', 'Admin']}>
+                                    <PatientList />
+                                </ProtectedRoute>
+                            } />
+
+                            {/* QUY TRÌNH 2: KHÁM BỆNH & YHCT */}
+                            <Route path="/medical" element={
+                                <ProtectedRoute allowedRoles={['Doctor']}>
+                                    <MedicalRecords />
+                                </ProtectedRoute>
+                            } />
+                            <Route path="/treatment" element={
+                                <ProtectedRoute allowedRoles={['Doctor', 'Nurse']}>
+                                    <Treatment />
+                                </ProtectedRoute>
+                            } />
+                            <Route path="/my-health" element={
+                                <ProtectedRoute allowedRoles={['Patient']}>
+                                    <PatientHistory />
+                                </ProtectedRoute>
+                            } />
+
+                            {/* QUY TRÌNH 3: THANH TOÁN & THUỐC */}
+                            {/* Doctor và Admin chỉ xem (MedicineManagement tự xử lý quyền bên trong) */}
+                            <Route path="/medicines" element={
+                                <ProtectedRoute allowedRoles={['Doctor', 'Pharmacist', 'Admin']}>
+                                    <MedicineManagement />
+                                </ProtectedRoute>
+                            } />
+                            <Route path="/dispense" element={
+                                <ProtectedRoute allowedRoles={['Pharmacist']}>
+                                    <PharmacyDispense />
+                                </ProtectedRoute>
+                            } />
+                            {/* Admin chỉ xem billing (Billing tự xử lý quyền bên trong) */}
+                            <Route path="/billing" element={
+                                <ProtectedRoute allowedRoles={['Cashier', 'Admin']}>
+                                    <Billing />
+                                </ProtectedRoute>
+                            } />
+
+                            {/* LỊCH & BÁO CÁO */}
+                            <Route path="/schedule" element={
+                                <ProtectedRoute allowedRoles={['Doctor', 'Nurse', 'Receptionist', 'Admin']}>
+                                    <Schedule />
+                                </ProtectedRoute>
+                            } />
+                            <Route path="/admin/reports" element={
+                                <ProtectedRoute allowedRoles={['Admin', 'Cashier', 'Pharmacist']}>
+                                    <AdvancedReport />
+                                </ProtectedRoute>
+                            } />
+
+                            {/* QUẢN TRỊ */}
+                            <Route path="/admin/users" element={
+                                <ProtectedRoute allowedRoles={['Admin']}>
+                                    <UserManagement />
+                                </ProtectedRoute>
+                            } />
                         </Routes>
                     </MainLayout>
                 } />
