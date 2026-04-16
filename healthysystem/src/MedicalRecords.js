@@ -39,12 +39,29 @@ const MedicalRecords = () => {
 
     const getAuthHeader = () => ({ headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } });
 
-    useEffect(() => { fetchPendingPatients(); }, []);
+    useEffect(() => { 
+        fetchPendingPatients(); 
+        // Bác sĩ không cần F5, cứ 5 giây hệ thống tự load lại xem Lễ tân có đẩy ai vào không
+        const interval = setInterval(fetchPendingPatients, 5000);
+        return () => clearInterval(interval);
+    }, []);
 
+    // ĐÂY LÀ HÀM ĐÃ ĐƯỢC CHỮA CHÁY TRIỆT ĐỂ
     const fetchPendingPatients = async () => {
         try {
-            const res = await axios.get(`${API}/api/appointments/pending`, getAuthHeader());
-            setPendingPatients(res.data);
+            // Lấy thẳng API queue của Lễ Tân (API này bạn đã xác nhận là đang chạy tốt)
+            const res = await axios.get(`${API}/api/queue`, getAuthHeader());
+            
+            // Lọc ra tất cả những bệnh nhân CHƯA KHÁM XONG (Không phải Examined, Paid, hay Cancelled)
+            // Lấy hết các ca: Pending (Chưa duyệt), Approved (Đã duyệt), Waiting, Called
+            const activeQueue = res.data
+                .filter(app => !['Examined', 'Paid', 'Cancelled'].includes(app.Status))
+                .map(app => ({
+                    ...app,
+                    PatientName: app.PatientFullName // Map tên lại để UI của bạn nhận diện được
+                }));
+                
+            setPendingPatients(activeQueue);
         } catch (err) {
             console.error("Lỗi tải hàng đợi:", err.message);
         }
@@ -204,7 +221,7 @@ const MedicalRecords = () => {
                     </button>
                 </div>
                 {pendingPatients.length === 0 ? (
-                    <p style={{ color: '#7f8c8d', padding: '15px', textAlign: 'center', fontSize: '13px' }}>Không có bệnh nhân chờ khám.<br/>Lễ tân/Y tá cần duyệt bệnh nhân trước.</p>
+                    <p style={{ color: '#7f8c8d', padding: '15px', textAlign: 'center', fontSize: '13px' }}>Không có bệnh nhân chờ khám.<br/>(Danh sách đang đồng bộ từ Quầy Lễ Tân)</p>
                 ) : null}
                 <ul style={{ listStyle: 'none', padding: 0, margin: 0, maxHeight: '500px', overflowY: 'auto' }}>
                     {pendingPatients.map(p => (
@@ -223,7 +240,7 @@ const MedicalRecords = () => {
                                 </span>
                             </div>
                             <div style={{ fontSize: '13px', color: '#7f8c8d', marginTop: '4px' }}>Lý do: {p.Reason}</div>
-                            <div style={{ fontSize: '12px', color: '#3498db', marginTop: '2px' }}>{p.Department}</div>
+                            <div style={{ fontSize: '12px', color: '#3498db', marginTop: '2px' }}>Khoa: {p.Department}</div>
                         </li>
                     ))}
                 </ul>

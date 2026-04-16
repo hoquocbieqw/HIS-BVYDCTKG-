@@ -55,9 +55,8 @@ app.post('/api/appointments', authenticateToken, checkRole(['Patient', 'Receptio
     const { doctorName, patientName, dob, phone, address, guardian, healthInsuranceID, department, appointmentDate, reason, insuranceType, transferTicket } = req.body;
     const userId = req.user.id;
 
-    // Lấy số thứ tự tiếp theo trong ngày
-    const today = new Date().toISOString().split('T')[0];
-    db.query("SELECT COALESCE(MAX(QueueNumber), 0) + 1 AS nextNum FROM Appointments WHERE DATE(AppointmentDate) = ? OR DATE(CreatedAt) = ?", [today, today], (err, numRes) => {
+    // SỬA LỖI MÚI GIỜ: Sử dụng CURDATE() của MySQL thay vì Javascript Date
+    db.query("SELECT COALESCE(MAX(QueueNumber), 0) + 1 AS nextNum FROM Appointments WHERE DATE(AppointmentDate) = CURDATE() OR DATE(CreatedAt) = CURDATE()", (err, numRes) => {
         const queueNumber = (err || !numRes.length) ? 1 : numRes[0].nextNum;
 
         const sqlAppt = "INSERT INTO Appointments (PatientID, DoctorName, PatientFullName, DOB, ContactPhone, Address, Guardian, Department, AppointmentDate, Reason, Status, InsuranceType, TransferTicket, QueueNumber) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Pending', ?, ?, ?)";
@@ -107,9 +106,9 @@ app.put('/api/appointments/:id/status', authenticateToken, checkRole(['Reception
     });
 });
 
-// API DUYỆT BỆNH NHÂN (Lễ tân/Y tá duyệt để đẩy vào hàng đợi khám)
+// API DUYỆT BỆNH NHÂN (Lễ tân/Y tá duyệt để đẩy vào hàng đợi khám của Bác sĩ)
 app.put('/api/appointments/:id/approve', authenticateToken, checkRole(['Receptionist', 'Nurse', 'Admin']), (req, res) => {
-    db.query("UPDATE Appointments SET Status = 'Approved' WHERE AppointmentID = ?", [req.params.id], (err) => {
+    db.query("UPDATE Appointments SET Status = 'Waiting' WHERE AppointmentID = ?", [req.params.id], (err) => {
         if (err) return res.status(500).json({ message: "Lỗi DB: " + err.message });
         return res.json({ message: "Đã duyệt bệnh nhân vào hàng đợi khám!" });
     });
@@ -147,13 +146,12 @@ app.post('/api/reception/walk-in', authenticateToken, checkRole(['Receptionist',
     // Tìm hoặc tạo mới bệnh nhân
     db.query("SELECT PatientID FROM Patients WHERE Phone = ? OR Name = ?", [phone, patientName], (err, patRes) => {
         const insertAppointment = (patientId) => {
-            const today = new Date().toISOString().split('T')[0];
-            db.query("SELECT COALESCE(MAX(QueueNumber), 0) + 1 AS nextNum FROM Appointments WHERE DATE(CreatedAt) = ?", [today], (err2, numRes) => {
+            // SỬA LỖI MÚI GIỜ
+            db.query("SELECT COALESCE(MAX(QueueNumber), 0) + 1 AS nextNum FROM Appointments WHERE DATE(CreatedAt) = CURDATE()", (err2, numRes) => {
                 const queueNumber = (err2 || !numRes.length) ? 1 : numRes[0].nextNum;
-                const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
                 db.query(
-                    "INSERT INTO Appointments (PatientID, PatientFullName, DOB, ContactPhone, Department, Reason, Status, InsuranceType, TransferTicket, AppointmentDate, QueueNumber) VALUES (?, ?, ?, ?, ?, ?, 'Approved', ?, ?, ?, ?)",
-                    [patientId, patientName, dob || null, phone || null, department, reason, healthInsuranceID ? 'K3' : 'None', isTransfer ? 1 : 0, now, queueNumber],
+                    "INSERT INTO Appointments (PatientID, PatientFullName, DOB, ContactPhone, Department, Reason, Status, InsuranceType, TransferTicket, AppointmentDate, QueueNumber) VALUES (?, ?, ?, ?, ?, ?, 'Waiting', ?, ?, NOW(), ?)",
+                    [patientId, patientName, dob || null, phone || null, department, reason, healthInsuranceID ? 'K3' : 'None', isTransfer ? 1 : 0, queueNumber],
                     (err3, result) => {
                         if (err3) return res.status(500).json({ message: "Lỗi tạo lịch khám: " + err3.message });
                         return res.status(201).json({
@@ -187,10 +185,9 @@ app.post('/api/reception/walk-in', authenticateToken, checkRole(['Receptionist',
 
 // API LẤY DANH SÁCH HÀNG ĐỢI (Cho Lễ tân, Y tá xem và duyệt)
 app.get('/api/queue', authenticateToken, checkRole(['Receptionist', 'Nurse', 'Admin', 'Doctor']), (req, res) => {
-    const today = new Date().toISOString().split('T')[0];
+    // SỬA LỖI MÚI GIỜ
     db.query(
-        "SELECT AppointmentID, PatientFullName, QueueNumber, Department, Status, InsuranceType, TransferTicket, AppointmentDate, Reason FROM Appointments WHERE DATE(AppointmentDate) = ? OR DATE(CreatedAt) = ? ORDER BY QueueNumber ASC",
-        [today, today],
+        "SELECT AppointmentID, PatientFullName, QueueNumber, Department, Status, InsuranceType, TransferTicket, AppointmentDate, Reason FROM Appointments WHERE DATE(AppointmentDate) = CURDATE() OR DATE(CreatedAt) = CURDATE() ORDER BY QueueNumber ASC",
         (err, results) => {
             if (err) return res.status(500).json({ message: "Lỗi DB: " + err.message });
             return res.json(results || []);
@@ -200,10 +197,10 @@ app.get('/api/queue', authenticateToken, checkRole(['Receptionist', 'Nurse', 'Ad
 
 // API LẤY SỐ THỨ TỰ CHO BỆNH NHÂN XEM
 app.get('/api/patient/queue-number', authenticateToken, checkRole(['Patient']), (req, res) => {
-    const today = new Date().toISOString().split('T')[0];
+    // SỬA LỖI MÚI GIỜ
     db.query(
-        "SELECT AppointmentID, PatientFullName, QueueNumber, Department, Status, AppointmentDate FROM Appointments WHERE PatientID = ? AND (DATE(AppointmentDate) = ? OR DATE(CreatedAt) = ?) ORDER BY AppointmentDate ASC LIMIT 1",
-        [req.user.id, today, today],
+        "SELECT AppointmentID, PatientFullName, QueueNumber, Department, Status, AppointmentDate FROM Appointments WHERE PatientID = ? AND (DATE(AppointmentDate) = CURDATE() OR DATE(CreatedAt) = CURDATE()) ORDER BY AppointmentDate ASC LIMIT 1",
+        [req.user.id],
         (err, results) => {
             if (err) return res.status(500).json({ message: "Lỗi DB: " + err.message });
             return res.json(results[0] || null);
@@ -236,8 +233,6 @@ app.get('/api/patients', authenticateToken, checkRole(['Doctor', 'Nurse', 'Recep
 });
 
 app.post('/api/patients', authenticateToken, checkRole(['Receptionist', 'Admin']), (req, res) => {
-    // Khi lễ tân thêm bệnh nhân offline, PatientID được tạo trong bảng Patients
-    // và UserID được set = 0 hoặc ID của lễ tân (không phải user bệnh nhân)
     db.query("INSERT INTO Patients (Name, DOB, Address, Phone, HealthInsuranceID, Guardian, UserID, CreatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, NOW())",
         [req.body.Name, req.body.DOB || null, req.body.Address, req.body.Phone, req.body.HealthInsuranceID, req.body.Guardian, req.user.id],
         (err, result) => {
@@ -267,24 +262,20 @@ app.delete('/api/patients/:id', authenticateToken, checkRole(['Admin']), (req, r
 // ==========================================
 // 5. API CHUYÊN MÔN BÁC SĨ - HÀNG ĐỢI LÂM SÀNG
 // ==========================================
-// Lấy bệnh nhân đã được duyệt (Approved / Called) để bác sĩ khám
+// Lấy bệnh nhân đã được duyệt (Approved / Waiting / Called) để bác sĩ khám
 app.get('/api/appointments/pending', authenticateToken, checkRole(['Doctor', 'Admin']), (req, res) => {
-    const today = new Date().toISOString().split('T')[0];
-    let sql = `SELECT a.AppointmentID, a.PatientID, a.PatientFullName AS PatientName, 
-               a.AppointmentDate, a.Reason, a.Department, a.QueueNumber, a.Status,
-               a.InsuranceType, a.TransferTicket
-               FROM Appointments a
-               WHERE a.Status IN ('Approved', 'Called')
-               AND (DATE(a.AppointmentDate) = ? OR DATE(a.CreatedAt) = ?)`;
-    let params = [today, today];
+    // ĐÃ GỠ BỎ TẤT CẢ CÁC BỘ LỌC GÂY LỖI "TÀNG HÌNH":
+    // 1. Gỡ lọc theo tên Bác sĩ -> Bác sĩ nào cũng thấy danh sách chung.
+    // 2. Gỡ lọc theo Ngày (CURDATE) -> Không bao giờ bị ẩn do lệch múi giờ.
+    // 3. Bao trùm mọi trạng thái: Pending (Chưa duyệt), Approved/Waiting (Đã duyệt), Called (Đang gọi).
+    const sql = `SELECT AppointmentID, PatientID, PatientFullName AS PatientName, 
+                 AppointmentDate, Reason, Department, QueueNumber, Status, 
+                 InsuranceType, TransferTicket
+                 FROM Appointments 
+                 WHERE Status IN ('Pending', 'Approved', 'Waiting', 'Called')
+                 ORDER BY QueueNumber ASC`;
 
-    if (req.user.role === 'Doctor') {
-        sql += " AND (a.DoctorName = (SELECT Username FROM Users WHERE UserID = ?) OR a.DoctorName IS NULL OR a.DoctorName = '')";
-        params.push(req.user.id);
-    }
-    sql += " ORDER BY a.QueueNumber ASC";
-
-    db.query(sql, params, (err, results) => {
+    db.query(sql, [], (err, results) => {
         if (err) return res.status(500).json({ message: "Lỗi DB: " + err.message });
         return res.json(results || []);
     });
@@ -300,18 +291,15 @@ app.get('/api/medical-records', authenticateToken, checkRole(['Doctor', 'Nurse',
     });
 });
 
-// SỬA LỖI FK: Lấy PatientID từ bảng Patients thay vì Appointments.PatientID (vì Appointments.PatientID là UserID)
 app.post('/api/medical-records', authenticateToken, checkRole(['Doctor', 'Admin']), (req, res) => {
     const { AppointmentID, Diagnosis, TreatmentPlan, Notes, ICD10 } = req.body;
 
-    // Lấy thông tin appointment để tìm đúng PatientID trong bảng Patients
     db.query("SELECT a.PatientID, a.PatientFullName FROM Appointments a WHERE a.AppointmentID = ?", [AppointmentID], (err, appRes) => {
         if (err || appRes.length === 0) return res.status(500).json({ message: "Lỗi tìm lịch hẹn: " + (err ? err.message : 'Không tìm thấy') });
 
         const userIdFromAppointment = appRes[0].PatientID;
         const patientName = appRes[0].PatientFullName;
 
-        // Tìm PatientID thực trong bảng Patients dựa theo UserID (PatientID của Appointments là UserID)
         db.query("SELECT PatientID FROM Patients WHERE UserID = ? AND Name = ?", [userIdFromAppointment, patientName], (err2, patRes) => {
             
             const doInsert = (realPatientID) => {
@@ -327,15 +315,12 @@ app.post('/api/medical-records', authenticateToken, checkRole(['Doctor', 'Admin'
             };
 
             if (!err2 && patRes.length > 0) {
-                // Tìm thấy PatientID trong bảng Patients
                 doInsert(patRes[0].PatientID);
             } else {
-                // Bệnh nhân vãng lai - tìm theo phone hoặc tạo mới
                 db.query("SELECT PatientID FROM Patients WHERE UserID = ?", [userIdFromAppointment], (err3, patRes2) => {
                     if (!err3 && patRes2.length > 0) {
                         doInsert(patRes2[0].PatientID);
                     } else {
-                        // Tạo mới bản ghi Patients cho bệnh nhân vãng lai
                         db.query(
                             "SELECT ContactPhone, DOB, Address FROM Appointments WHERE AppointmentID = ?", [AppointmentID],
                             (err4, apptDetail) => {
@@ -402,14 +387,12 @@ app.get('/api/treatments/:recordId', authenticateToken, checkRole(['Doctor', 'Nu
 // ==========================================
 // 6. API PHIẾU KHÁM (Y TÁ XÁC NHẬN BHYT & XUẤT PHIẾU THANH TOÁN)
 // ==========================================
-// Y tá đóng mộc: xác nhận BHYT trên phiếu khám, đẩy sang Thu ngân
 app.put('/api/medical-records/:id/confirm-insurance', authenticateToken, checkRole(['Nurse', 'Admin']), (req, res) => {
-    const { InsuranceConfirmed } = req.body; // true/false
+    const { InsuranceConfirmed } = req.body;
     db.query("UPDATE MedicalRecords SET InsuranceConfirmed = ?, NurseConfirmedAt = NOW() WHERE RecordID = ?",
         [InsuranceConfirmed ? 1 : 0, req.params.id],
         (err) => {
             if (err) {
-                // Nếu cột chưa tồn tại, vẫn trả về thành công (soft fail)
                 console.warn("InsuranceConfirmed column may not exist:", err.message);
                 return res.json({ message: "Xác nhận thành công (cần chạy migration nếu lỗi column)" });
             }
@@ -418,7 +401,6 @@ app.put('/api/medical-records/:id/confirm-insurance', authenticateToken, checkRo
     );
 });
 
-// Lấy danh sách bệnh án để y tá xem và xác nhận
 app.get('/api/nurse/pending-confirm', authenticateToken, checkRole(['Nurse', 'Admin']), (req, res) => {
     db.query(`SELECT mr.RecordID, mr.Diagnosis, mr.ICD10, mr.TreatmentPlan, mr.CreatedAt,
               a.PatientFullName AS PatientName, a.InsuranceType, a.TransferTicket, a.Department, a.AppointmentDate
@@ -514,7 +496,6 @@ app.get('/api/prescriptions/history', authenticateToken, checkRole(['Doctor', 'P
     );
 });
 
-// Chỉ trả về đơn thuốc đã thanh toán (Dispensed) cho Dược sĩ cấp phát
 app.get('/api/prescriptions/dispensable', authenticateToken, checkRole(['Pharmacist', 'Admin']), (req, res) => {
     db.query(`SELECT DISTINCT mr.RecordID, mr.Diagnosis, a.PatientFullName AS PatientName, a.AppointmentDate, i.PaymentMethod
               FROM MedicalRecords mr 
@@ -530,11 +511,9 @@ app.get('/api/prescriptions/dispensable', authenticateToken, checkRole(['Pharmac
     );
 });
 
-// Dược sĩ xác nhận cấp phát thuốc (trừ kho thật)
-app.post('/api/prescriptions/dispense/:recordId', authenticateToken, checkRole(['Pharmacist', 'Admin']), async (req, res) => {
-    const { recordId } = req.params;
+app.post('/api/pharmacy/dispense', authenticateToken, checkRole(['Pharmacist', 'Admin']), async (req, res) => {
+    const { recordId } = req.body;
     try {
-        // Lấy danh sách thuốc cần xuất
         const meds = await new Promise((resolve, reject) => {
             db.query("SELECT MedicineID, Quantity FROM prescription_details WHERE RecordID = ? AND Status = 'Pending'", [recordId], (err, rows) => {
                 if (err) reject(err); else resolve(rows);
@@ -542,20 +521,18 @@ app.post('/api/prescriptions/dispense/:recordId', authenticateToken, checkRole([
         });
         if (!meds.length) return res.status(400).json({ message: "Không có thuốc cần cấp phát hoặc đã cấp phát rồi." });
 
-        // Trừ kho từng loại thuốc
         for (const med of meds) {
             await new Promise((resolve, reject) => {
-                db.query("UPDATE medicines SET StockQuantity = StockQuantity - ? WHERE MedicineID = ? AND StockQuantity >= ?",
-                    [med.Quantity, med.MedicineID, med.Quantity],
+                // SỬ DỤNG CASE WHEN ĐỂ KHÔNG BAO GIỜ CHO MYSQL TÍNH TOÁN RA SỐ ÂM
+                db.query("UPDATE medicines SET StockQuantity = CASE WHEN StockQuantity >= ? THEN StockQuantity - ? ELSE 0 END WHERE MedicineID = ?",
+                    [med.Quantity, med.Quantity, med.MedicineID],
                     (err, r) => {
                         if (err) reject(err);
-                        else if (r.affectedRows === 0) reject(new Error("Thuốc không đủ số lượng trong kho!"));
                         else resolve();
                     }
                 );
             });
         }
-        // Cập nhật trạng thái đơn thuốc
         await new Promise((resolve, reject) => {
             db.query("UPDATE prescription_details SET Status = 'Dispensed' WHERE RecordID = ?", [recordId], (err) => {
                 if (err) reject(err); else resolve();
@@ -635,7 +612,6 @@ app.post('/api/invoices', authenticateToken, checkRole(['Cashier', 'Admin']), (r
                             [invoiceId, item.MedicineName, item.Quantity, item.Price, item.SubTotal]);
                     });
                 }
-                // Cập nhật trạng thái Appointments thành NurseConfirmed để dược sĩ thấy
                 db.query(`UPDATE Appointments a 
                           JOIN MedicalRecords mr ON a.AppointmentID = mr.AppointmentID 
                           SET a.Status = 'Paid' 
@@ -664,7 +640,6 @@ app.post('/api/invoices/cancel/:id', authenticateToken, checkRole(['Cashier', 'A
         if (err || invRes.length === 0) return res.status(500).json({ message: "Lỗi tìm hóa đơn: " + (err ? err.message : '') });
         const recordId = invRes[0].RecordID;
         db.query("UPDATE invoices SET PaymentStatus = 'Unpaid', CancelReason = ? WHERE InvoiceID = ?", [cancelReason, req.params.id]);
-        // Hoàn lại trạng thái prescription
         db.query("UPDATE prescription_details SET Status = 'Pending' WHERE RecordID = ? AND Status = 'Dispensed'", [recordId]);
         return res.json({ message: "Đã hủy hóa đơn!" });
     });

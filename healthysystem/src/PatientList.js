@@ -120,7 +120,7 @@ const PatientList = () => {
     const getStatusBadge = (status) => {
         const map = {
             'Pending': { bg: '#fff3cd', color: '#856404', label: 'Chờ duyệt' },
-            'Approved': { bg: '#d1ecf1', color: '#0c5460', label: 'Đã duyệt' },
+            'Waiting': { bg: '#d1ecf1', color: '#0c5460', label: 'Đã duyệt' }, // Đã sửa Approved thành Waiting
             'Called': { bg: '#d4edda', color: '#155724', label: 'Đang gọi' },
             'Examined': { bg: '#cce5ff', color: '#004085', label: 'Đã khám' },
             'Paid': { bg: '#d4edda', color: '#155724', label: 'Đã TT' },
@@ -147,7 +147,7 @@ const PatientList = () => {
                     Hồ sơ bệnh nhân
                 </button>
                 <button onClick={() => { setActiveTab('queue'); fetchQueue(); }} style={{ padding: '10px 20px', fontWeight: 'bold', cursor: 'pointer', border: 'none', borderRadius: '8px 8px 0 0', background: activeTab === 'queue' ? '#e74c3c' : 'transparent', color: activeTab === 'queue' ? 'white' : '#64748b' }}>
-                    Danh sách chờ khám ({queue.filter(q => ['Pending','Approved','Called'].includes(q.Status)).length})
+                    Danh sách chờ khám ({queue.filter(q => ['Pending','Waiting','Called'].includes(q.Status)).length}) 
                 </button>
             </div>
 
@@ -251,7 +251,8 @@ const PatientList = () => {
                                                 Duyệt
                                             </button>
                                         )}
-                                        {q.Status === 'Approved' && ['Receptionist', 'Nurse', 'Admin'].includes(role) && (
+                                        {/* Đã sửa Approved thành Waiting ở đây */}
+                                        {q.Status === 'Waiting' && ['Receptionist', 'Nurse', 'Admin'].includes(role) && (
                                             <button onClick={() => handleCallNumber(q.AppointmentID, q.QueueNumber, q.PatientFullName)} style={btnStyle('#f39c12')}>
                                                 Gọi số
                                             </button>
